@@ -8,7 +8,7 @@
     "dev:client": "vite",
     "dev:client-only": "vite",
     "dev:server": "node server/index.js",
-    "build": "tsc -b && vite build",
+    "build": "npx tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "start": "node server/index.js"
