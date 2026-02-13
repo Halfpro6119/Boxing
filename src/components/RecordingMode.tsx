@@ -195,7 +195,10 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
     setError(null);
     setStatus('connecting');
     let displayStream = screenStream;
-    let camStream = cameraEnabled ? cameraStream : null;
+    let camStream: MediaStream | null = null;
+    if (cameraEnabled && cameraStream?.active && cameraStream.getVideoTracks().length) {
+      camStream = cameraStream;
+    }
     let audioStream = micEnabled ? micStream : null;
 
     try {
@@ -207,6 +210,11 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
         }
         setScreenStream(displayStream);
       }
+      if (!displayStream?.getVideoTracks().length) {
+        setError('Could not capture screen. Make sure you selected a window or screen to share.');
+        setStatus('idle');
+        return;
+      }
       displayStream.getVideoTracks()[0].onended = () => {
         const rec = mediaRecorderRef.current;
         if (rec?.state === 'recording' || rec?.state === 'paused') {
@@ -215,10 +223,15 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
       };
 
       if (cameraEnabled && !camStream) {
-        camStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 320, height: 240, facingMode: 'user', deviceId: selectedCameraId || undefined },
-        });
-        setCameraStream(camStream);
+        try {
+          camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          setCameraStream(camStream);
+        } catch (camErr) {
+          camStream = null;
+          setError(
+            'Could not access camera (it may be in use by another app). Recording without face camera.'
+          );
+        }
       }
 
       if (micEnabled && !audioStream) {
@@ -401,7 +414,17 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
       };
     } catch (err) {
       console.error('Failed to start recording:', err);
-      setError(err instanceof Error ? err.message : 'Failed to start recording');
+      const msg = err instanceof Error ? err.message : 'Failed to start recording';
+      let hint = '';
+      if (
+        msg.toLowerCase().includes('video source') ||
+        msg.toLowerCase().includes('videosource') ||
+        msg.toLowerCase().includes('failed to allocate')
+      ) {
+        hint =
+          ' The camera or screen may be in use by another app. Close Zoom, Teams, or other video apps and try again. You can also try unchecking "face camera" to record screen only.';
+      }
+      setError(`Could not start recording.${hint}`);
       setStatus('idle');
       stopAllStreams();
       return;
