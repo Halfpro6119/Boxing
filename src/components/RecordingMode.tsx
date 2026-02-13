@@ -132,12 +132,23 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
 
   const connectScreen = useCallback(async () => {
     setError(null);
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      setError('Screen sharing is not supported in this browser. Try Chrome, Edge, or Firefox.');
+      return;
+    }
     try {
       screenStream?.getTracks().forEach((t) => t.stop());
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: true,
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      } catch (audioErr) {
+        const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
+        if (msg.toLowerCase().includes('not supported')) {
+          stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        } else {
+          throw audioErr;
+        }
+      }
       setScreenStream(stream);
       if (screenPreviewRef.current) {
         screenPreviewRef.current.srcObject = stream;
@@ -148,7 +159,12 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
       };
     } catch (err) {
       console.error('Failed to connect screen:', err);
-      setError(err instanceof Error ? err.message : 'Could not share screen');
+      const msg = err instanceof Error ? err.message : 'Could not share screen';
+      const hint =
+        msg.toLowerCase().includes('not supported') || msg.toLowerCase().includes('not allowed')
+          ? ' Screen sharing requires HTTPS (or localhost) and a supported browser (Chrome, Edge, Firefox, Safari).'
+          : '';
+      setError(`Could not share screen.${hint}`);
       setScreenStream(null);
     }
   }, [screenStream]);
@@ -168,10 +184,11 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
 
     try {
       if (!displayStream) {
-        displayStream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: true,
-        });
+        try {
+          displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        } catch {
+          displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        }
         setScreenStream(displayStream);
       }
       displayStream.getVideoTracks()[0].onended = () => {
