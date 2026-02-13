@@ -1,5 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
+interface MediaDeviceInfo {
+  deviceId: string;
+  label: string;
+  kind: MediaDeviceKind;
+}
+
 interface RecordingModeProps {
   onBack: () => void;
 }
@@ -8,45 +14,173 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
   const [status, setStatus] = useState<'idle' | 'recording' | 'stopped'>('idle');
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [micEnabled, setMicEnabled] = useState(true);
+
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>('');
+  const [selectedMicId, setSelectedMicId] = useState<string>('');
+
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [micStream, setMicStream] = useState<MediaStream | null>(null);
+
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const cameraPreviewRef = useRef<HTMLVideoElement>(null);
+  const screenPreviewRef = useRef<HTMLVideoElement>(null);
+  const recordingStreamsRef = useRef<MediaStream[]>([]);
+
+  const enumerateDevices = useCallback(async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setCameras(
+        devices
+          .filter((d) => d.kind === 'videoinput')
+          .map((d) => ({ deviceId: d.deviceId, label: d.label || `Camera ${d.deviceId.slice(0, 8)}`, kind: d.kind }))
+      );
+      setMics(
+        devices
+          .filter((d) => d.kind === 'audioinput')
+          .map((d) => ({ deviceId: d.deviceId, label: d.label || `Microphone ${d.deviceId.slice(0, 8)}`, kind: d.kind }))
+      );
+      if (devices.length && !selectedCameraId) {
+        const firstCam = devices.find((d) => d.kind === 'videoinput');
+        if (firstCam) setSelectedCameraId(firstCam.deviceId);
+      }
+      if (devices.length && !selectedMicId) {
+        const firstMic = devices.find((d) => d.kind === 'audioinput');
+        if (firstMic) setSelectedMicId(firstMic.deviceId);
+      }
+    } catch (err) {
+      console.error('Failed to enumerate devices:', err);
+      setError('Could not list devices');
+    }
+  }, [selectedCameraId, selectedMicId]);
+
+  useEffect(() => {
+    enumerateDevices();
+  }, [enumerateDevices]);
 
   const stopAllStreams = useCallback(() => {
     screenStream?.getTracks().forEach((t) => t.stop());
     cameraStream?.getTracks().forEach((t) => t.stop());
+    micStream?.getTracks().forEach((t) => t.stop());
     setScreenStream(null);
     setCameraStream(null);
-  }, [screenStream, cameraStream]);
+    setMicStream(null);
+  }, [screenStream, cameraStream, micStream]);
 
   useEffect(() => {
     return () => stopAllStreams();
   }, [stopAllStreams]);
 
-  const startRecording = useCallback(async () => {
+  const connectCamera = useCallback(async () => {
+    setError(null);
     try {
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { displaySurface: 'browser' },
+      cameraStream?.getTracks().forEach((t) => t.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 320, height: 240, facingMode: 'user', deviceId: selectedCameraId || undefined },
+      });
+      setCameraStream(stream);
+      if (cameraPreviewRef.current) {
+        cameraPreviewRef.current.srcObject = stream;
+      }
+      await enumerateDevices();
+    } catch (err) {
+      console.error('Failed to connect camera:', err);
+      setError(err instanceof Error ? err.message : 'Could not access camera');
+      setCameraStream(null);
+    }
+  }, [selectedCameraId, cameraStream, enumerateDevices]);
+
+  const disconnectCamera = useCallback(() => {
+    cameraStream?.getTracks().forEach((t) => t.stop());
+    setCameraStream(null);
+    if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
+  }, [cameraStream]);
+
+  const connectMic = useCallback(async () => {
+    setError(null);
+    try {
+      micStream?.getTracks().forEach((t) => t.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: selectedMicId || undefined },
+      });
+      setMicStream(stream);
+      await enumerateDevices();
+    } catch (err) {
+      console.error('Failed to connect microphone:', err);
+      setError(err instanceof Error ? err.message : 'Could not access microphone');
+      setMicStream(null);
+    }
+  }, [selectedMicId, micStream, enumerateDevices]);
+
+  const disconnectMic = useCallback(() => {
+    micStream?.getTracks().forEach((t) => t.stop());
+    setMicStream(null);
+  }, [micStream]);
+
+  const connectScreen = useCallback(async () => {
+    setError(null);
+    try {
+      screenStream?.getTracks().forEach((t) => t.stop());
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
         audio: true,
       });
-
-      let micStream: MediaStream | null = null;
-      if (micEnabled) {
-        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setScreenStream(stream);
+      if (screenPreviewRef.current) {
+        screenPreviewRef.current.srcObject = stream;
       }
+      stream.getVideoTracks()[0].onended = () => {
+        setScreenStream(null);
+        if (screenPreviewRef.current) screenPreviewRef.current.srcObject = null;
+      };
+    } catch (err) {
+      console.error('Failed to connect screen:', err);
+      setError(err instanceof Error ? err.message : 'Could not share screen');
+      setScreenStream(null);
+    }
+  }, [screenStream]);
 
-      let camStream: MediaStream | null = null;
-      if (cameraEnabled) {
-        camStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 320, height: 240, facingMode: 'user' },
+  const disconnectScreen = useCallback(() => {
+    screenStream?.getTracks().forEach((t) => t.stop());
+    setScreenStream(null);
+    if (screenPreviewRef.current) screenPreviewRef.current.srcObject = null;
+  }, [screenStream]);
+
+  const startRecording = useCallback(async () => {
+    setError(null);
+    let displayStream = screenStream;
+    let camStream = cameraEnabled ? cameraStream : null;
+    let audioStream = micEnabled ? micStream : null;
+
+    try {
+      if (!displayStream) {
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: true,
         });
+        setScreenStream(displayStream);
       }
 
-      setScreenStream(displayStream);
-      setCameraStream(camStream);
+      if (cameraEnabled && !camStream) {
+        camStream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 320, height: 240, facingMode: 'user', deviceId: selectedCameraId || undefined },
+        });
+        setCameraStream(camStream);
+      }
+
+      if (micEnabled && !audioStream) {
+        audioStream = await navigator.mediaDevices.getUserMedia({
+          audio: { deviceId: selectedMicId || undefined },
+        });
+        setMicStream(audioStream);
+      }
 
       const screenVideo = document.createElement('video');
       screenVideo.srcObject = displayStream;
@@ -78,8 +212,8 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
         );
         screenSource.connect(dest);
       }
-      if (micStream) {
-        const micSource = audioCtx.createMediaStreamSource(micStream);
+      if (audioStream) {
+        const micSource = audioCtx.createMediaStreamSource(audioStream);
         micSource.connect(dest);
       }
 
@@ -87,8 +221,11 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
       const audioTracks = dest.stream.getAudioTracks();
       audioTracks.forEach((t) => canvasStream.addTrack(t));
 
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9'
+        : 'video/webm';
       const recorder = new MediaRecorder(canvasStream, {
-        mimeType: 'video/webm;codecs=vp9',
+        mimeType,
         videoBitsPerSecond: 5000000,
       });
       chunksRef.current = [];
@@ -137,19 +274,39 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
       };
       draw();
 
+      recordingStreamsRef.current = [displayStream];
+      if (camStream) recordingStreamsRef.current.push(camStream);
+      if (audioStream) recordingStreamsRef.current.push(audioStream);
+
       recorder.onstop = () => {
         keepDrawing = false;
         const blob = new Blob(chunksRef.current, { type: 'video/webm' });
         setRecordedBlob(blob);
         setStatus('stopped');
-        stopAllStreams();
+        recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+        recordingStreamsRef.current = [];
+        setScreenStream(null);
+        setCameraStream(null);
+        setMicStream(null);
+        if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
+        if (screenPreviewRef.current) screenPreviewRef.current.srcObject = null;
       };
     } catch (err) {
       console.error('Failed to start recording:', err);
+      setError(err instanceof Error ? err.message : 'Failed to start recording');
       setStatus('idle');
       stopAllStreams();
     }
-  }, [cameraEnabled, micEnabled, status, stopAllStreams]);
+  }, [
+    cameraEnabled,
+    micEnabled,
+    screenStream,
+    cameraStream,
+    micStream,
+    selectedCameraId,
+    selectedMicId,
+    stopAllStreams,
+  ]);
 
   const stopRecording = useCallback(() => {
     mediaRecorderRef.current?.stop();
@@ -170,6 +327,8 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
     setStatus('idle');
   }, []);
 
+  const canRecord = screenStream || (status === 'idle');
+
   return (
     <div className="min-h-screen p-6">
       <div className="max-w-4xl mx-auto">
@@ -187,39 +346,193 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
         </div>
 
         <p className="text-slate-400 mb-6">
-          Record your screen with optional face camera (Loom-style) and microphone. Share your screen
-          with the Boxing Video Analyzer to record annotations too.
+          Connect your camera, microphone, and screen before recording. You can preview each source
+          and choose which devices to use.
         </p>
 
+        {error && (
+          <div className="mb-4 p-3 rounded-lg bg-red-900/30 border border-red-500/50 text-red-300">
+            {error}
+          </div>
+        )}
+
         {status === 'idle' && (
-          <div className="space-y-4 mb-6">
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={cameraEnabled}
-                  onChange={(e) => setCameraEnabled(e.target.checked)}
-                  className="rounded accent-ring"
-                />
-                <span className="text-slate-300">Show face camera bubble</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={micEnabled}
-                  onChange={(e) => setMicEnabled(e.target.checked)}
-                  className="rounded accent-ring"
-                />
-                <span className="text-slate-300">Record microphone</span>
-              </label>
+          <div className="space-y-6 mb-6">
+            {/* Screen */}
+            <div className="rounded-xl border border-slate-600/50 bg-slate-800/30 p-4">
+              <h3 className="text-lg font-medium text-white mb-3 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-slate-500" />
+                Screen
+              </h3>
+              <div className="flex flex-wrap gap-4 items-start">
+                <div className="flex-1 min-w-[200px]">
+                  {screenStream ? (
+                    <div className="space-y-2">
+                      <video
+                        ref={screenPreviewRef}
+                        autoPlay
+                        muted
+                        playsInline
+                        className="w-full max-w-md aspect-video rounded-lg bg-black object-contain border border-slate-600"
+                      />
+                      <button
+                        type="button"
+                        onClick={disconnectScreen}
+                        className="px-3 py-1.5 rounded-lg bg-slate-600 text-slate-200 hover:bg-slate-500 text-sm"
+                      >
+                        Disconnect screen
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={connectScreen}
+                        className="px-4 py-2 rounded-lg bg-ring text-white font-medium hover:bg-red-600 transition-colors"
+                      >
+                        Connect screen
+                      </button>
+                      <span className="text-slate-500 text-sm">Share a window or your entire screen</span>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={startRecording}
-              className="px-6 py-3 rounded-lg bg-ring text-white font-medium hover:bg-red-600 transition-colors"
-            >
-              Start Recording
-            </button>
+
+            {/* Camera */}
+            <div className="rounded-xl border border-slate-600/50 bg-slate-800/30 p-4">
+              <h3 className="text-lg font-medium text-white mb-3 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-slate-500" />
+                Camera
+              </h3>
+              <div className="flex flex-wrap gap-4 items-start">
+                <div className="flex-1 min-w-[200px]">
+                  <div className="flex gap-2 mb-2">
+                    <select
+                      value={selectedCameraId}
+                      onChange={(e) => setSelectedCameraId(e.target.value)}
+                      className="px-3 py-2 rounded-lg bg-slate-700 text-slate-200 border border-slate-600 min-w-[180px]"
+                    >
+                      {cameras.map((c) => (
+                        <option key={c.deviceId} value={c.deviceId}>
+                          {c.label}
+                        </option>
+                      ))}
+                      {cameras.length === 0 && (
+                        <option value="">No cameras found</option>
+                      )}
+                    </select>
+                    {cameraStream ? (
+                      <button
+                        type="button"
+                        onClick={disconnectCamera}
+                        className="px-3 py-2 rounded-lg bg-slate-600 text-slate-200 hover:bg-slate-500"
+                      >
+                        Disconnect
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={connectCamera}
+                        className="px-4 py-2 rounded-lg bg-ring text-white font-medium hover:bg-red-600 transition-colors"
+                      >
+                        Connect camera
+                      </button>
+                    )}
+                  </div>
+                  {cameraStream && (
+                    <video
+                      ref={cameraPreviewRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="w-48 aspect-video rounded-lg bg-black object-cover border border-slate-600"
+                    />
+                  )}
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={cameraEnabled}
+                    onChange={(e) => setCameraEnabled(e.target.checked)}
+                    className="rounded accent-ring"
+                  />
+                  <span className="text-slate-300">Include in recording (face bubble)</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Microphone */}
+            <div className="rounded-xl border border-slate-600/50 bg-slate-800/30 p-4">
+              <h3 className="text-lg font-medium text-white mb-3 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-slate-500" />
+                Microphone
+              </h3>
+              <div className="flex flex-wrap gap-4 items-center">
+                <select
+                  value={selectedMicId}
+                  onChange={(e) => setSelectedMicId(e.target.value)}
+                  className="px-3 py-2 rounded-lg bg-slate-700 text-slate-200 border border-slate-600 min-w-[180px]"
+                >
+                  {mics.map((m) => (
+                    <option key={m.deviceId} value={m.deviceId}>
+                      {m.label}
+                    </option>
+                  ))}
+                  {mics.length === 0 && (
+                    <option value="">No microphones found</option>
+                  )}
+                </select>
+                {micStream ? (
+                  <button
+                    type="button"
+                    onClick={disconnectMic}
+                    className="px-3 py-2 rounded-lg bg-slate-600 text-slate-200 hover:bg-slate-500"
+                  >
+                    Disconnect
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={connectMic}
+                    className="px-4 py-2 rounded-lg bg-ring text-white font-medium hover:bg-red-600 transition-colors"
+                  >
+                    Connect mic
+                  </button>
+                )}
+                {micStream && (
+                  <span className="text-green-400 text-sm flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                    Connected
+                  </span>
+                )}
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={micEnabled}
+                    onChange={(e) => setMicEnabled(e.target.checked)}
+                    className="rounded accent-ring"
+                  />
+                  <span className="text-slate-300">Include in recording</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-slate-600/50">
+              <button
+                type="button"
+                onClick={startRecording}
+                disabled={!canRecord}
+                className="px-6 py-3 rounded-lg bg-ring text-white font-medium hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Start Recording
+              </button>
+              <p className="mt-2 text-slate-500 text-sm">
+                {screenStream
+                  ? 'Screen is connected. Click to start recording.'
+                  : 'Connect your screen first, or click Start Recording to choose what to share.'}
+              </p>
+            </div>
           </div>
         )}
 
