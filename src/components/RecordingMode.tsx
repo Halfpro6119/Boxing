@@ -11,7 +11,8 @@ interface RecordingModeProps {
 }
 
 export default function RecordingMode({ onBack }: RecordingModeProps) {
-  const [status, setStatus] = useState<'idle' | 'connecting' | 'recording' | 'stopped'>('idle');
+  const [status, setStatus] = useState<'idle' | 'connecting' | 'recording' | 'paused' | 'stopped'>('idle');
+  const [recordingDuration, setRecordingDuration] = useState(0);
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [micEnabled, setMicEnabled] = useState(true);
 
@@ -33,6 +34,7 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
   const cameraPreviewRef = useRef<HTMLVideoElement>(null);
   const screenPreviewRef = useRef<HTMLVideoElement>(null);
   const recordingStreamsRef = useRef<MediaStream[]>([]);
+  const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const enumerateDevices = useCallback(async () => {
     try {
@@ -81,7 +83,21 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
   }, [screenStream, cameraStream, micStream]);
 
   useEffect(() => {
-    return () => stopAllStreams();
+    return () => {
+      stopAllStreams();
+      if (durationIntervalRef.current) {
+        clearInterval(durationIntervalRef.current);
+        durationIntervalRef.current = null;
+      }
+      const rec = mediaRecorderRef.current;
+      if (rec?.state !== 'inactive') {
+        try {
+          rec?.stop();
+        } catch {
+          /* ignore */
+        }
+      }
+    };
   }, [stopAllStreams]);
 
   const connectCamera = useCallback(async () => {
@@ -192,8 +208,9 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
         setScreenStream(displayStream);
       }
       displayStream.getVideoTracks()[0].onended = () => {
-        if (mediaRecorderRef.current?.state === 'recording') {
-          mediaRecorderRef.current.stop();
+        const rec = mediaRecorderRef.current;
+        if (rec?.state === 'recording' || rec?.state === 'paused') {
+          rec.stop();
         }
       };
 
@@ -354,7 +371,12 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
 
       mediaRecorderRef.current = recorder;
       recorder.start(100);
+      setRecordingDuration(0);
       setStatus('recording');
+
+      durationIntervalRef.current = setInterval(() => {
+        setRecordingDuration((d) => d + 1);
+      }, 1000);
 
       recordingStreamsRef.current = [displayStream];
       if (camStream) recordingStreamsRef.current.push(camStream);
@@ -362,6 +384,10 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
 
       recorder.onstop = () => {
         keepDrawing = false;
+        if (durationIntervalRef.current) {
+          clearInterval(durationIntervalRef.current);
+          durationIntervalRef.current = null;
+        }
         const blob = new Blob(chunksRef.current, { type: mimeType });
         setRecordedBlob(blob);
         setStatus('stopped');
@@ -391,9 +417,48 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
     stopAllStreams,
   ]);
 
+  const pauseRecording = useCallback(() => {
+    const rec = mediaRecorderRef.current;
+    if (rec?.state === 'recording') {
+      try {
+        rec.pause();
+        if (durationIntervalRef.current) {
+          clearInterval(durationIntervalRef.current);
+          durationIntervalRef.current = null;
+        }
+        setStatus('paused');
+      } catch (err) {
+        console.error('Failed to pause:', err);
+        setError('Pause not supported in this browser');
+      }
+    }
+  }, []);
+
+  const resumeRecording = useCallback(() => {
+    const rec = mediaRecorderRef.current;
+    if (rec?.state === 'paused') {
+      try {
+        rec.resume();
+        setStatus('recording');
+        durationIntervalRef.current = setInterval(() => {
+          setRecordingDuration((d) => d + 1);
+        }, 1000);
+      } catch (err) {
+        console.error('Failed to resume:', err);
+        setError('Resume not supported in this browser');
+      }
+    }
+  }, []);
+
   const stopRecording = useCallback(() => {
     mediaRecorderRef.current?.stop();
   }, []);
+
+  const formatDuration = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
 
   const downloadRecording = useCallback(() => {
     if (!recordedBlob) return;
@@ -633,27 +698,76 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
           </div>
         )}
 
-        {(status === 'connecting' || status === 'recording') && (
+        {(status === 'connecting' || status === 'recording' || status === 'paused') && (
           <div className="space-y-4 mb-6">
-            <div className="flex items-center gap-2 text-red-400">
-              <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-              {status === 'connecting' ? 'Connecting...' : 'Recording in progress...'}
+            <div className="rounded-xl border border-slate-600/50 bg-slate-800/30 p-4">
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`w-3 h-3 rounded-full ${
+                      status === 'paused' ? 'bg-amber-500' : 'bg-red-500 animate-pulse'
+                    }`}
+                  />
+                  <span className="text-white font-medium">
+                    {status === 'connecting'
+                      ? 'Connecting...'
+                      : status === 'paused'
+                        ? 'Paused'
+                        : 'Recording'}
+                  </span>
+                </div>
+                {(status === 'recording' || status === 'paused') && (
+                  <span className="text-slate-400 font-mono tabular-nums">
+                    {formatDuration(recordingDuration)}
+                  </span>
+                )}
+                <div className="flex-1" />
+                {status === 'recording' && (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={pauseRecording}
+                      className="px-4 py-2 rounded-lg bg-amber-600 text-white font-medium hover:bg-amber-500 transition-colors flex items-center gap-2"
+                    >
+                      <span>⏸</span> Pause
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopRecording}
+                      className="px-4 py-2 rounded-lg bg-red-900/80 text-white font-medium hover:bg-red-800 border border-red-500/50 transition-colors flex items-center gap-2"
+                    >
+                      <span>⏹</span> End
+                    </button>
+                  </div>
+                )}
+                {status === 'paused' && (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={resumeRecording}
+                      className="px-4 py-2 rounded-lg bg-green-600 text-white font-medium hover:bg-green-500 transition-colors flex items-center gap-2"
+                    >
+                      <span>▶</span> Resume
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopRecording}
+                      className="px-4 py-2 rounded-lg bg-red-900/80 text-white font-medium hover:bg-red-800 border border-red-500/50 transition-colors flex items-center gap-2"
+                    >
+                      <span>⏹</span> End
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-            {status === 'recording' && (
-              <button
-                type="button"
-                onClick={stopRecording}
-                className="px-6 py-3 rounded-lg bg-slate-700 text-white hover:bg-slate-600"
-              >
-                Stop Recording
-              </button>
-            )}
           </div>
         )}
 
         {status === 'stopped' && recordedBlob && (
           <div className="space-y-4">
-            <p className="text-green-400">Recording complete!</p>
+            <p className="text-green-400">
+              Recording complete! Duration: {formatDuration(recordingDuration)}
+            </p>
             <div className="flex gap-2">
               <button
                 type="button"
