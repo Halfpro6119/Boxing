@@ -11,7 +11,7 @@ interface RecordingModeProps {
 }
 
 export default function RecordingMode({ onBack }: RecordingModeProps) {
-  const [status, setStatus] = useState<'idle' | 'recording' | 'stopped'>('idle');
+  const [status, setStatus] = useState<'idle' | 'connecting' | 'recording' | 'stopped'>('idle');
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [micEnabled, setMicEnabled] = useState(true);
 
@@ -63,6 +63,12 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
 
   useEffect(() => {
     enumerateDevices();
+  }, [enumerateDevices]);
+
+  useEffect(() => {
+    const onDeviceChange = () => enumerateDevices();
+    navigator.mediaDevices?.addEventListener('devicechange', onDeviceChange);
+    return () => navigator.mediaDevices?.removeEventListener('devicechange', onDeviceChange);
   }, [enumerateDevices]);
 
   const stopAllStreams = useCallback(() => {
@@ -155,6 +161,7 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
 
   const startRecording = useCallback(async () => {
     setError(null);
+    setStatus('connecting');
     let displayStream = screenStream;
     let camStream = cameraEnabled ? cameraStream : null;
     let audioStream = micEnabled ? micStream : null;
@@ -167,6 +174,11 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
         });
         setScreenStream(displayStream);
       }
+      displayStream.getVideoTracks()[0].onended = () => {
+        if (mediaRecorderRef.current?.state === 'recording') {
+          mediaRecorderRef.current.stop();
+        }
+      };
 
       if (cameraEnabled && !camStream) {
         camStream = await navigator.mediaDevices.getUserMedia({
@@ -188,11 +200,26 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
       await screenVideo.play();
 
       const canvas = canvasRef.current;
-      if (!canvas) return;
+      if (!canvas) {
+        setError('Recording canvas not ready. Please try again.');
+        setStatus('idle');
+        return;
+      }
       const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      if (!ctx) {
+        setError('Could not initialize recording canvas.');
+        setStatus('idle');
+        return;
+      }
 
-      const screenTrack = displayStream.getVideoTracks()[0];
+      const videoTracks = displayStream.getVideoTracks();
+      if (!videoTracks.length) {
+        setError('No video track from screen share.');
+        setStatus('idle');
+        stopAllStreams();
+        return;
+      }
+      const screenTrack = videoTracks[0];
       const { width, height } = screenTrack.getSettings();
       canvas.width = width || 1920;
       canvas.height = height || 1080;
@@ -217,17 +244,94 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
         micSource.connect(dest);
       }
 
-      const canvasStream = canvas.captureStream(30);
-      const audioTracks = dest.stream.getAudioTracks();
-      audioTracks.forEach((t) => canvasStream.addTrack(t));
+      const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+      const createRecorder = (stream: MediaStream): { recorder: MediaRecorder; mimeType: string } => {
+        for (const mime of mimeTypes) {
+          if (MediaRecorder.isTypeSupported(mime)) {
+            try {
+              const rec = new MediaRecorder(stream, {
+                mimeType: mime,
+                videoBitsPerSecond: 5000000,
+              });
+              return { recorder: rec, mimeType: mime };
+            } catch {
+              continue;
+            }
+          }
+        }
+        try {
+          const rec = new MediaRecorder(stream);
+          return { recorder: rec, mimeType: rec.mimeType || 'video/webm' };
+        } catch (e) {
+          throw new Error('Recording not supported in this browser. Try Chrome or Edge.');
+        }
+      };
 
-      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-        ? 'video/webm;codecs=vp9'
-        : 'video/webm';
-      const recorder = new MediaRecorder(canvasStream, {
-        mimeType,
-        videoBitsPerSecond: 5000000,
-      });
+      let recorder: MediaRecorder;
+      let mimeType: string;
+      let keepDrawing = true;
+
+      try {
+        const canvasStream = canvas.captureStream(30);
+        const audioTracks = dest.stream.getAudioTracks();
+        audioTracks.forEach((t) => canvasStream.addTrack(t));
+        const result = createRecorder(canvasStream);
+        recorder = result.recorder;
+        mimeType = result.mimeType;
+
+        const bubbleSize = 160;
+        const bubbleX = canvas.width - bubbleSize - 24;
+        const bubbleY = 24;
+
+        const draw = () => {
+          if (!keepDrawing) return;
+          ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
+
+          if (camStream && faceVideo.readyState >= 2) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(
+              bubbleX + bubbleSize / 2,
+              bubbleY + bubbleSize / 2,
+              bubbleSize / 2 + 4,
+              0,
+              Math.PI * 2
+            );
+            ctx.fillStyle = '#1d3557';
+            ctx.fill();
+            ctx.strokeStyle = '#e63946';
+            ctx.lineWidth = 4;
+            ctx.stroke();
+            ctx.clip();
+            ctx.drawImage(
+              faceVideo,
+              bubbleX,
+              bubbleY,
+              bubbleSize,
+              bubbleSize
+            );
+            ctx.restore();
+          }
+
+          if (keepDrawing) requestAnimationFrame(draw);
+        };
+        draw();
+      } catch (canvasErr) {
+        const msg = canvasErr instanceof Error ? canvasErr.message : String(canvasErr);
+        if (msg.toLowerCase().includes('not supported') || msg.toLowerCase().includes('notsupported')) {
+          const combinedStream = new MediaStream([
+            ...displayStream.getVideoTracks(),
+            ...dest.stream.getAudioTracks(),
+          ]);
+          const result = createRecorder(combinedStream);
+          recorder = result.recorder;
+          mimeType = result.mimeType;
+          keepDrawing = false;
+        } else {
+          throw canvasErr;
+        }
+      }
+
       chunksRef.current = [];
       recorder.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
 
@@ -235,52 +339,13 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
       recorder.start(100);
       setStatus('recording');
 
-      const bubbleSize = 160;
-      const bubbleX = canvas.width - bubbleSize - 24;
-      const bubbleY = 24;
-      let keepDrawing = true;
-
-      const draw = () => {
-        if (!keepDrawing) return;
-        ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
-
-        if (camStream && faceVideo.readyState >= 2) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(
-            bubbleX + bubbleSize / 2,
-            bubbleY + bubbleSize / 2,
-            bubbleSize / 2 + 4,
-            0,
-            Math.PI * 2
-          );
-          ctx.fillStyle = '#1d3557';
-          ctx.fill();
-          ctx.strokeStyle = '#e63946';
-          ctx.lineWidth = 4;
-          ctx.stroke();
-          ctx.clip();
-          ctx.drawImage(
-            faceVideo,
-            bubbleX,
-            bubbleY,
-            bubbleSize,
-            bubbleSize
-          );
-          ctx.restore();
-        }
-
-        if (keepDrawing) requestAnimationFrame(draw);
-      };
-      draw();
-
       recordingStreamsRef.current = [displayStream];
       if (camStream) recordingStreamsRef.current.push(camStream);
       if (audioStream) recordingStreamsRef.current.push(audioStream);
 
       recorder.onstop = () => {
         keepDrawing = false;
-        const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+        const blob = new Blob(chunksRef.current, { type: mimeType });
         setRecordedBlob(blob);
         setStatus('stopped');
         recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
@@ -296,6 +361,7 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
       setError(err instanceof Error ? err.message : 'Failed to start recording');
       setStatus('idle');
       stopAllStreams();
+      return;
     }
   }, [
     cameraEnabled,
@@ -314,10 +380,11 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
 
   const downloadRecording = useCallback(() => {
     if (!recordedBlob) return;
+    const ext = recordedBlob.type.includes('mp4') ? 'mp4' : 'webm';
     const url = URL.createObjectURL(recordedBlob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `boxing-recording-${Date.now()}.webm`;
+    a.download = `boxing-recording-${Date.now()}.${ext}`;
     a.click();
     URL.revokeObjectURL(url);
   }, [recordedBlob]);
@@ -328,9 +395,15 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
   }, []);
 
   const canRecord = screenStream || (status === 'idle');
+  const hasRecordingSupport =
+    typeof navigator !== 'undefined' &&
+    !!navigator.mediaDevices?.getDisplayMedia &&
+    typeof MediaRecorder !== 'undefined';
 
   return (
     <div className="min-h-screen p-6">
+      {/* Canvas must always be in DOM for captureStream - hidden until recording */}
+      <canvas ref={canvasRef} className="hidden" aria-hidden />
       <div className="max-w-4xl mx-auto">
         <div className="flex justify-between items-center mb-6">
           <h1 className="font-display text-3xl tracking-wider text-white">
@@ -349,6 +422,13 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
           Connect your camera, microphone, and screen before recording. You can preview each source
           and choose which devices to use.
         </p>
+
+        {!hasRecordingSupport && (
+          <div className="mb-4 p-3 rounded-lg bg-amber-900/30 border border-amber-500/50 text-amber-200">
+            Screen recording requires a modern browser with getDisplayMedia and MediaRecorder support
+            (Chrome, Edge, Firefox, or Safari 14.1+). Please use a supported browser.
+          </div>
+        )}
 
         {error && (
           <div className="mb-4 p-3 rounded-lg bg-red-900/30 border border-red-500/50 text-red-300">
@@ -522,7 +602,7 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
               <button
                 type="button"
                 onClick={startRecording}
-                disabled={!canRecord}
+                disabled={!canRecord || !hasRecordingSupport}
                 className="px-6 py-3 rounded-lg bg-ring text-white font-medium hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Start Recording
@@ -536,20 +616,21 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
           </div>
         )}
 
-        {status === 'recording' && (
+        {(status === 'connecting' || status === 'recording') && (
           <div className="space-y-4 mb-6">
             <div className="flex items-center gap-2 text-red-400">
               <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-              Recording in progress...
+              {status === 'connecting' ? 'Connecting...' : 'Recording in progress...'}
             </div>
-            <canvas ref={canvasRef} className="hidden" />
-            <button
-              type="button"
-              onClick={stopRecording}
-              className="px-6 py-3 rounded-lg bg-slate-700 text-white hover:bg-slate-600"
-            >
-              Stop Recording
-            </button>
+            {status === 'recording' && (
+              <button
+                type="button"
+                onClick={stopRecording}
+                className="px-6 py-3 rounded-lg bg-slate-700 text-white hover:bg-slate-600"
+              >
+                Stop Recording
+              </button>
+            )}
           </div>
         )}
 
