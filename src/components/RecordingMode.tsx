@@ -39,6 +39,9 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
   const recordingStreamsRef = useRef<MediaStream[]>([]);
   const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const drawFrameRef = useRef<number | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
 
   const enumerateDevices = useCallback(async () => {
     try {
@@ -77,6 +80,10 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
     return () => navigator.mediaDevices?.removeEventListener('devicechange', onDeviceChange);
   }, [enumerateDevices]);
 
+  screenStreamRef.current = screenStream;
+  cameraStreamRef.current = cameraStream;
+  micStreamRef.current = micStream;
+
   const stopAllStreams = useCallback(() => {
     screenStream?.getTracks().forEach((t) => t.stop());
     cameraStream?.getTracks().forEach((t) => t.stop());
@@ -88,7 +95,9 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
 
   useEffect(() => {
     return () => {
-      stopAllStreams();
+      screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+      cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
+      micStreamRef.current?.getTracks().forEach((t) => t.stop());
       if (durationIntervalRef.current) {
         clearInterval(durationIntervalRef.current);
         durationIntervalRef.current = null;
@@ -106,7 +115,7 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
         }
       }
     };
-  }, [stopAllStreams]);
+  }, []);
 
   const connectCamera = useCallback(async () => {
     setError(null);
