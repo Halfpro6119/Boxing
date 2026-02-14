@@ -425,6 +425,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
           chunksRef.current.push(e.data);
         }
       };
+      recorder.onerror = (e) => {
+        console.error('MediaRecorder error:', e);
+        setError('Recording failed. Try again or use a different browser.');
+      };
 
       mediaRecorderRef.current = recorder;
       // Use a timeslice so browsers emit data periodically. 250ms gives the encoder time to produce keyframes.
@@ -458,6 +462,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
         if (screenPreviewRef.current) screenPreviewRef.current.srcObject = null;
 
+        const durationSec = recordingDurationRef.current;
         const processChunks = () => {
           const chunks = chunksRef.current;
           try {
@@ -468,12 +473,12 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
             }
             const actualMime = recorder.mimeType.startsWith('video/webm') ? recorder.mimeType : mimeType;
             const blob = new Blob(chunks, { type: actualMime });
-            const durationSec = recordingDurationRef.current;
             setRecordedBlob(blob);
             setStatus('stopped');
+            setRecording({ status: 'stopped', duration: durationSec, blob });
             const notify = onRecordingCompleteRef.current;
             if (notify) {
-              queueMicrotask(() => notify(blob, durationSec));
+              notify(blob, durationSec);
             }
           } catch (err) {
             console.error('Recording onstop error:', err);
@@ -482,8 +487,9 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
           }
         };
 
-        // Defer so the final ondataavailable (from requestData/stop) can run first
-        setTimeout(processChunks, 0);
+        // Defer so the final ondataavailable (from requestData/stop) is delivered first.
+        // Some browsers emit the last chunk asynchronously after onstop is queued.
+        setTimeout(processChunks, 150);
       };
     } catch (err) {
       console.error('Failed to start recording:', err);
@@ -603,12 +609,18 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
     typeof MediaRecorder !== 'undefined';
 
   // Always render the same canvas so it never unmounts during recording (avoid black/frozen output).
+  // During recording, avoid display:none so the canvas stays paintable for captureStream (browser quirks).
+  const isActivelyRecording = status === 'recording' || status === 'paused' || status === 'connecting';
   return (
     <div
       className={hidden ? 'sr-only min-h-0 overflow-hidden pointer-events-none' : 'min-h-screen p-6'}
       aria-hidden={hidden}
     >
-      <canvas ref={canvasRef} className="hidden" aria-hidden />
+      <canvas
+        ref={canvasRef}
+        className={isActivelyRecording ? 'absolute opacity-0 w-px h-px overflow-hidden pointer-events-none -z-10' : 'hidden'}
+        aria-hidden
+      />
       {!hidden && (
       <div className="max-w-4xl mx-auto">
         <div className="flex justify-between items-center mb-6">
