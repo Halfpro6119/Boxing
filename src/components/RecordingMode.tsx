@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { useRecording } from '../context/RecordingContext';
 
 interface MediaDeviceInfo {
   deviceId: string;
@@ -8,9 +9,11 @@ interface MediaDeviceInfo {
 
 interface RecordingModeProps {
   onBack: () => void;
+  hidden?: boolean;
 }
 
-export default function RecordingMode({ onBack }: RecordingModeProps) {
+export default function RecordingMode({ onBack, hidden = false }: RecordingModeProps) {
+  const { setRecording } = useRecording();
   const [status, setStatus] = useState<'idle' | 'connecting' | 'recording' | 'paused' | 'stopped'>('idle');
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [cameraEnabled, setCameraEnabled] = useState(true);
@@ -477,27 +480,22 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
     mediaRecorderRef.current?.stop();
   }, []);
 
+  useEffect(() => {
+    setRecording({
+      status,
+      duration: recordingDuration,
+      blob: recordedBlob,
+      pauseRecording,
+      resumeRecording,
+      stopRecording,
+    });
+  }, [status, recordingDuration, recordedBlob, pauseRecording, resumeRecording, stopRecording, setRecording]);
+
   const formatDuration = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
-
-  const downloadRecording = useCallback(() => {
-    if (!recordedBlob) return;
-    const ext = recordedBlob.type.includes('mp4') ? 'mp4' : 'webm';
-    const url = URL.createObjectURL(recordedBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `boxing-recording-${Date.now()}.${ext}`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [recordedBlob]);
-
-  const startOver = useCallback(() => {
-    setRecordedBlob(null);
-    setStatus('idle');
-  }, []);
 
   const canRecord = screenStream || (status === 'idle');
   const hasRecordingSupport =
@@ -505,9 +503,16 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
     !!navigator.mediaDevices?.getDisplayMedia &&
     typeof MediaRecorder !== 'undefined';
 
+  if (hidden) {
+    return (
+      <div className="sr-only" aria-hidden>
+        <canvas ref={canvasRef} className="hidden" aria-hidden />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen p-6">
-      {/* Canvas must always be in DOM for captureStream - hidden until recording */}
       <canvas ref={canvasRef} className="hidden" aria-hidden />
       <div className="max-w-4xl mx-auto">
         <div className="flex justify-between items-center mb-6">
@@ -721,91 +726,29 @@ export default function RecordingMode({ onBack }: RecordingModeProps) {
           </div>
         )}
 
-        {(status === 'connecting' || status === 'recording' || status === 'paused') && (
+        {(status === 'connecting' || status === 'recording' || status === 'paused') && !hidden && (
           <div className="space-y-4 mb-6">
             <div className="rounded-xl border border-slate-600/50 bg-slate-800/30 p-4">
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`w-3 h-3 rounded-full ${
-                      status === 'paused' ? 'bg-amber-500' : 'bg-red-500 animate-pulse'
-                    }`}
-                  />
-                  <span className="text-white font-medium">
-                    {status === 'connecting'
-                      ? 'Connecting...'
-                      : status === 'paused'
-                        ? 'Paused'
-                        : 'Recording'}
-                  </span>
-                </div>
-                {(status === 'recording' || status === 'paused') && (
-                  <span className="text-slate-400 font-mono tabular-nums">
-                    {formatDuration(recordingDuration)}
-                  </span>
-                )}
-                <div className="flex-1" />
-                {status === 'recording' && (
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={pauseRecording}
-                      className="px-4 py-2 rounded-lg bg-amber-600 text-white font-medium hover:bg-amber-500 transition-colors flex items-center gap-2"
-                    >
-                      <span>⏸</span> Pause
-                    </button>
-                    <button
-                      type="button"
-                      onClick={stopRecording}
-                      className="px-4 py-2 rounded-lg bg-red-900/80 text-white font-medium hover:bg-red-800 border border-red-500/50 transition-colors flex items-center gap-2"
-                    >
-                      <span>⏹</span> End
-                    </button>
-                  </div>
-                )}
-                {status === 'paused' && (
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={resumeRecording}
-                      className="px-4 py-2 rounded-lg bg-green-600 text-white font-medium hover:bg-green-500 transition-colors flex items-center gap-2"
-                    >
-                      <span>▶</span> Resume
-                    </button>
-                    <button
-                      type="button"
-                      onClick={stopRecording}
-                      className="px-4 py-2 rounded-lg bg-red-900/80 text-white font-medium hover:bg-red-800 border border-red-500/50 transition-colors flex items-center gap-2"
-                    >
-                      <span>⏹</span> End
-                    </button>
-                  </div>
-                )}
+              <div className="flex items-center gap-2">
+                <span
+                  className={`w-3 h-3 rounded-full ${
+                    status === 'paused' ? 'bg-amber-500' : 'bg-red-500 animate-pulse'
+                  }`}
+                />
+                <span className="text-white">
+                  {status === 'connecting'
+                    ? 'Connecting...'
+                    : status === 'paused'
+                      ? 'Paused'
+                      : 'Recording'}
+                </span>
+                <span className="text-slate-400 font-mono ml-2">
+                  {formatDuration(recordingDuration)}
+                </span>
               </div>
-            </div>
-          </div>
-        )}
-
-        {status === 'stopped' && recordedBlob && (
-          <div className="space-y-4">
-            <p className="text-green-400">
-              Recording complete! Duration: {formatDuration(recordingDuration)}
-            </p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={downloadRecording}
-                className="px-6 py-3 rounded-lg bg-accent text-slate-900 font-medium hover:bg-orange-400"
-              >
-                Download Recording
-              </button>
-              <button
-                type="button"
-                onClick={startOver}
-                className="px-6 py-3 rounded-lg bg-slate-700 text-slate-300 hover:bg-slate-600"
-              >
-                Record Again
-              </button>
+              <p className="text-slate-500 text-sm mt-1">
+                Use the floating toolbar to pause or end. You can switch tabs while recording.
+              </p>
             </div>
           </div>
         )}

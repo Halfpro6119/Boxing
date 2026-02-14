@@ -42,11 +42,31 @@ export default function AnnotationCanvas({
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    const canvasAspect = canvas.width / canvas.height;
+    const rectAspect = rect.width / rect.height;
+
+    // When object-fit: contain is used (e.g. in fullscreen), the canvas content
+    // is letterboxed/pillarboxed. Compute the actual content rect.
+    let contentLeft: number, contentTop: number, contentWidth: number, contentHeight: number;
+    if (rectAspect > canvasAspect) {
+      // Rect is wider - content is pillarboxed (bars on sides)
+      contentHeight = rect.height;
+      contentWidth = rect.height * canvasAspect;
+      contentLeft = rect.left + (rect.width - contentWidth) / 2;
+      contentTop = rect.top;
+    } else {
+      // Rect is taller - content is letterboxed (bars top/bottom)
+      contentWidth = rect.width;
+      contentHeight = rect.width / canvasAspect;
+      contentLeft = rect.left;
+      contentTop = rect.top + (rect.height - contentHeight) / 2;
+    }
+
+    const scaleX = canvas.width / contentWidth;
+    const scaleY = canvas.height / contentHeight;
     return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY,
+      x: (e.clientX - contentLeft) * scaleX,
+      y: (e.clientY - contentTop) * scaleY,
     };
   }, []);
 
