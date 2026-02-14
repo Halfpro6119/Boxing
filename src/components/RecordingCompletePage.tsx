@@ -67,21 +67,21 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
       setPreviewLoading(false);
     };
     if (blob.type.includes('webm')) {
-      setPreviewLoading(true);
-      convertWebmToMp4(blob)
-        .then((mp4Blob) => {
-          if (cancelled) return;
-          tryPreview(URL.createObjectURL(mp4Blob));
-        })
-        .catch(() => {
-          if (cancelled) return;
-          if (canPlayWebM()) {
-            tryPreview(URL.createObjectURL(blob));
-          } else {
+      if (canPlayWebM()) {
+        tryPreview(URL.createObjectURL(blob));
+      } else {
+        setPreviewLoading(true);
+        convertWebmToMp4(blob)
+          .then((mp4Blob) => {
+            if (cancelled) return;
+            tryPreview(URL.createObjectURL(mp4Blob));
+          })
+          .catch(() => {
+            if (cancelled) return;
             setVideoError('Preview not available in this browser. You can still download the recording.');
             setPreviewLoading(false);
-          }
-        });
+          });
+      }
     } else {
       tryPreview(URL.createObjectURL(blob));
     }
