@@ -1,13 +1,32 @@
+import { useEffect, useRef } from 'react';
 import { useRecording, formatDuration } from '../context/RecordingContext';
 
 export default function RecordingToolbar() {
   const { recording } = useRecording();
   const { status, duration, pauseRecording, resumeRecording, stopRecording } = recording;
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (status !== 'recording' && status !== 'paused') return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        stopRecording();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [status, stopRecording]);
 
   if (status !== 'recording' && status !== 'paused') return null;
 
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999]">
+    <div
+      ref={containerRef}
+      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999]"
+      role="toolbar"
+      aria-label="Recording controls"
+    >
       <div className="rounded-xl border border-slate-600/50 bg-slate-900/95 backdrop-blur-sm shadow-xl px-5 py-3 flex items-center gap-4">
         <div className="flex items-center gap-2">
           <span
@@ -45,9 +64,11 @@ export default function RecordingToolbar() {
           type="button"
           onClick={stopRecording}
           className="px-4 py-2 rounded-lg bg-red-900/80 text-white font-medium hover:bg-red-800 border border-red-500/50 transition-colors flex items-center gap-2"
+          title="End recording (Escape)"
         >
           <span>⏹</span> End
         </button>
+        <span className="text-slate-500 text-xs ml-1">Esc to end</span>
       </div>
     </div>
   );

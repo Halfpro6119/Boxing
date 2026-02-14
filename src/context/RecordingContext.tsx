@@ -24,14 +24,21 @@ const RecordingContext = createContext<{
   recording: RecordingState;
   setRecording: (state: Partial<RecordingState>) => void;
   dismissRecording: () => void;
+  openInAnalyzerBlob: Blob | null;
+  openRecordingInAnalyzer: (blob: Blob) => void;
+  clearOpenInAnalyzer: () => void;
 }>({
   recording: defaultState,
   setRecording: () => {},
   dismissRecording: () => {},
+  openInAnalyzerBlob: null,
+  openRecordingInAnalyzer: () => {},
+  clearOpenInAnalyzer: () => {},
 });
 
 export function RecordingProvider({ children }: { children: ReactNode }) {
   const [recording, setRecordingState] = useState<RecordingState>(defaultState);
+  const [openInAnalyzerBlob, setOpenInAnalyzerBlob] = useState<Blob | null>(null);
 
   const setRecording = useCallback((state: Partial<RecordingState>) => {
     setRecordingState((prev) => ({ ...prev, ...state }));
@@ -41,8 +48,25 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     setRecordingState(defaultState);
   }, []);
 
+  const openRecordingInAnalyzer = useCallback((blob: Blob) => {
+    setOpenInAnalyzerBlob(blob);
+  }, []);
+
+  const clearOpenInAnalyzer = useCallback(() => {
+    setOpenInAnalyzerBlob(null);
+  }, []);
+
   return (
-    <RecordingContext.Provider value={{ recording, setRecording, dismissRecording }}>
+    <RecordingContext.Provider
+      value={{
+        recording,
+        setRecording,
+        dismissRecording,
+        openInAnalyzerBlob,
+        openRecordingInAnalyzer,
+        clearOpenInAnalyzer,
+      }}
+    >
       {children}
     </RecordingContext.Provider>
   );

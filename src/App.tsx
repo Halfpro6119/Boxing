@@ -8,13 +8,25 @@ import { RecordingProvider, useRecording } from './context/RecordingContext';
 function AppContent() {
   const [mode, setMode] = useState<'analyzer' | 'recording'>('analyzer');
   const workspaceRef = useRef<VideoPlayerWorkspaceHandle>(null);
-  const { recording } = useRecording();
+  const {
+    recording,
+    openInAnalyzerBlob,
+    openRecordingInAnalyzer,
+    clearOpenInAnalyzer,
+    dismissRecording,
+  } = useRecording();
   const isRecording = recording.status === 'recording' || recording.status === 'paused';
   const showCompletePage = recording.status === 'stopped' && recording.blob;
 
   const handleSwitchToRecording = async () => {
     const ok = (await workspaceRef.current?.confirmLeave()) ?? true;
     if (ok) setMode('recording');
+  };
+
+  const handleOpenInAnalyzer = (blob: Blob) => {
+    openRecordingInAnalyzer(blob);
+    dismissRecording();
+    setMode('analyzer');
   };
 
   return (
@@ -57,7 +69,11 @@ function AppContent() {
           </div>
         )}
         {mode === 'analyzer' && (
-          <VideoPlayerWorkspace ref={workspaceRef} />
+          <VideoPlayerWorkspace
+            ref={workspaceRef}
+            initialRecordingBlob={openInAnalyzerBlob}
+            onRecordingConsumed={clearOpenInAnalyzer}
+          />
         )}
         {mode === 'recording' && isRecording && (
           <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
@@ -79,7 +95,10 @@ function AppContent() {
       <RecordingToolbar />
 
       {showCompletePage && (
-        <RecordingCompletePage onClose={() => setMode('recording')} />
+        <RecordingCompletePage
+          onClose={() => setMode('recording')}
+          onOpenInAnalyzer={handleOpenInAnalyzer}
+        />
       )}
     </div>
   );

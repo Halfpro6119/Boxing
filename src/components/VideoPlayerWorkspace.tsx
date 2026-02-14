@@ -34,7 +34,13 @@ export interface VideoPlayerWorkspaceHandle {
   confirmLeave: () => Promise<boolean>;
 }
 
-const VideoPlayerWorkspace = forwardRef<VideoPlayerWorkspaceHandle>(function VideoPlayerWorkspace(_, ref) {
+export interface VideoPlayerWorkspaceProps {
+  initialRecordingBlob?: Blob | null;
+  onRecordingConsumed?: () => void;
+}
+
+const VideoPlayerWorkspace = forwardRef<VideoPlayerWorkspaceHandle, VideoPlayerWorkspaceProps>(
+  function VideoPlayerWorkspace({ initialRecordingBlob, onRecordingConsumed }, ref) {
   const [videoSource, setVideoSource] = useState<VideoSource | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -76,8 +82,26 @@ const VideoPlayerWorkspace = forwardRef<VideoPlayerWorkspaceHandle>(function Vid
   const desiredPlayStateRef = useRef(false);
   const videoSourceTypeRef = useRef<VideoSource['type'] | null>(null);
   const pauseDebounceRef = useRef<number | null>(null);
+  const recordingUrlRef = useRef<string | null>(null);
 
   videoSourceTypeRef.current = videoSource?.type ?? null;
+
+  // Load recording from Recording Mode "Open in Video Analyzer"
+  useEffect(() => {
+    if (!initialRecordingBlob || initialRecordingBlob.size === 0) return;
+    const url = URL.createObjectURL(initialRecordingBlob);
+    recordingUrlRef.current = url;
+    setVideoSource({ type: 'file', url });
+    onRecordingConsumed?.();
+  }, [initialRecordingBlob]);
+
+  // Revoke recording object URL when user clears video or loads a different one
+  useEffect(() => {
+    if (videoSource === null && recordingUrlRef.current) {
+      URL.revokeObjectURL(recordingUrlRef.current);
+      recordingUrlRef.current = null;
+    }
+  }, [videoSource]);
 
   const enterFullscreen = useCallback(() => {
     const el = fullscreenRef.current;
@@ -293,6 +317,10 @@ const VideoPlayerWorkspace = forwardRef<VideoPlayerWorkspaceHandle>(function Vid
 
   const handleVideoLoaded = useCallback(
     (source: VideoSource, options?: VideoLoadOptions) => {
+      if (recordingUrlRef.current) {
+        URL.revokeObjectURL(recordingUrlRef.current);
+        recordingUrlRef.current = null;
+      }
       setVideoSource(source);
       if (options?.annotations?.length) {
         const normalized = normalizeAnnotations(options.annotations);
@@ -771,6 +799,6 @@ const VideoPlayerWorkspace = forwardRef<VideoPlayerWorkspaceHandle>(function Vid
       </div>
     </div>
   );
-});
+  });
 
 export default VideoPlayerWorkspace;

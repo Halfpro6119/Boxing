@@ -30,6 +30,9 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
 
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [facePosition, setFacePosition] = useState<'top-right' | 'top-left' | 'bottom-right' | 'bottom-left'>('top-right');
+  const [countdownEnabled, setCountdownEnabled] = useState(true);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -42,6 +45,9 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
   const screenStreamRef = useRef<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
+  const facePositionRef = useRef(facePosition);
+  const countdownFiredRef = useRef(false);
+  facePositionRef.current = facePosition;
 
   const enumerateDevices = useCallback(async () => {
     try {
@@ -79,6 +85,21 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
     navigator.mediaDevices?.addEventListener('devicechange', onDeviceChange);
     return () => navigator.mediaDevices?.removeEventListener('devicechange', onDeviceChange);
   }, [enumerateDevices]);
+
+  useEffect(() => {
+    if (status !== 'recording' && status !== 'paused') return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [status]);
+
+  useEffect(() => {
+    if (countdown === null || countdown <= 0) return;
+    const t = setTimeout(() => setCountdown((c) => (c ?? 0) - 1), 1000);
+    return () => clearTimeout(t);
+  }, [countdown]);
 
   screenStreamRef.current = screenStream;
   cameraStreamRef.current = cameraStream;
@@ -355,16 +376,21 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
         }
       };
 
-      // Draw display stream to canvas and record from canvas - fixes black screen when
-      // MediaRecorder gets no frames from getDisplayMedia stream directly
+      const margin = 16;
+      const faceSizeRatio = 0.2;
       const drawToCanvas = () => {
         if (screenVideo.readyState >= 2) {
           ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
           if (camStream && faceVideo.readyState >= 2) {
-            const faceW = Math.floor(canvas.width * 0.2);
+            const faceW = Math.floor(canvas.width * faceSizeRatio);
             const faceH = Math.floor(faceW * (faceVideo.videoHeight / faceVideo.videoWidth));
-            const x = canvas.width - faceW - 16;
-            const y = 16;
+            const pos = facePositionRef.current;
+            const x =
+              pos === 'top-right' || pos === 'bottom-right'
+                ? canvas.width - faceW - margin
+                : margin;
+            const y =
+              pos === 'top-right' || pos === 'top-left' ? margin : canvas.height - faceH - margin;
             ctx.fillStyle = 'rgba(0,0,0,0.4)';
             ctx.fillRect(x - 4, y - 4, faceW + 8, faceH + 8);
             ctx.drawImage(faceVideo, x, y, faceW, faceH);
@@ -464,6 +490,18 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
     selectedMicId,
     stopAllStreams,
   ]);
+
+  useEffect(() => {
+    if (countdown !== 0) return;
+    if (countdownFiredRef.current) return;
+    countdownFiredRef.current = true;
+    setCountdown(null);
+    startRecording();
+  }, [countdown, startRecording]);
+
+  useEffect(() => {
+    if (status === 'idle') countdownFiredRef.current = false;
+  }, [status]);
 
   const pauseRecording = useCallback(() => {
     const rec = mediaRecorderRef.current;
@@ -695,15 +733,36 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
                     />
                   )}
                 </div>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={cameraEnabled}
-                    onChange={(e) => setCameraEnabled(e.target.checked)}
-                    className="rounded accent-ring"
-                  />
-                  <span className="text-slate-300">Include in recording (face bubble)</span>
-                </label>
+                <div className="flex flex-wrap items-center gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={cameraEnabled}
+                      onChange={(e) => setCameraEnabled(e.target.checked)}
+                      className="rounded accent-ring"
+                    />
+                    <span className="text-slate-300">Include in recording (face bubble)</span>
+                  </label>
+                  {cameraEnabled && (
+                    <label className="flex items-center gap-2 text-slate-400 text-sm">
+                      <span>Position:</span>
+                      <select
+                        value={facePosition}
+                        onChange={(e) =>
+                          setFacePosition(
+                            e.target.value as 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left'
+                          )
+                        }
+                        className="px-2 py-1 rounded bg-slate-700 text-slate-200 border border-slate-600"
+                      >
+                        <option value="top-right">Top right</option>
+                        <option value="top-left">Top left</option>
+                        <option value="bottom-right">Bottom right</option>
+                        <option value="bottom-left">Bottom left</option>
+                      </select>
+                    </label>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -763,20 +822,40 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
               </div>
             </div>
 
-            <div className="pt-4 border-t border-slate-600/50">
+            <div className="pt-4 border-t border-slate-600/50 space-y-3">
+              <label className="flex items-center gap-2 cursor-pointer text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={countdownEnabled}
+                  onChange={(e) => setCountdownEnabled(e.target.checked)}
+                  className="rounded accent-ring"
+                />
+                <span>3-second countdown before recording</span>
+              </label>
               <button
                 type="button"
-                onClick={startRecording}
-                disabled={!canRecord || !hasRecordingSupport}
+                onClick={() =>
+                  countdownEnabled ? setCountdown(3) : startRecording()
+                }
+                disabled={!canRecord || !hasRecordingSupport || countdown !== null}
                 className="px-6 py-3 rounded-lg bg-ring text-white font-medium hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Start Recording
               </button>
-              <p className="mt-2 text-slate-500 text-sm">
+              <p className="text-slate-500 text-sm">
                 {screenStream
                   ? 'Screen is connected. Click to start recording.'
                   : 'Connect your screen first, or click Start Recording to choose what to share.'}
               </p>
+            </div>
+          </div>
+        )}
+
+        {countdown !== null && countdown > 0 && (
+          <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-slate-950/90 backdrop-blur-sm">
+            <div className="text-center">
+              <p className="text-slate-400 text-lg mb-2">Recording in</p>
+              <p className="text-6xl font-bold text-white tabular-nums">{countdown}</p>
             </div>
           </div>
         )}

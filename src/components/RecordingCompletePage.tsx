@@ -4,9 +4,10 @@ import { convertWebmToMp4 } from '../utils/convertToMp4';
 
 interface RecordingCompletePageProps {
   onClose: () => void;
+  onOpenInAnalyzer?: (blob: Blob) => void;
 }
 
-export default function RecordingCompletePage({ onClose }: RecordingCompletePageProps) {
+export default function RecordingCompletePage({ onClose, onOpenInAnalyzer }: RecordingCompletePageProps) {
   const { recording, dismissRecording } = useRecording();
   const { blob, duration } = recording;
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -23,6 +24,16 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
   const handleClose = () => {
     dismissRecording();
     onClose();
+  };
+
+  const handleRecordAgain = () => {
+    dismissRecording();
+    onClose();
+  };
+
+  const handleOpenInAnalyzer = () => {
+    if (!blob) return;
+    onOpenInAnalyzer?.(blob);
   };
 
   const handleDownload = async (asWebM = false) => {
@@ -162,7 +173,7 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
         {(convertError || videoError) && (
           <p className="text-red-400 text-sm mb-2">{convertError || videoError}</p>
         )}
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap gap-3 justify-center">
           <button
             type="button"
             onClick={() => handleDownload(false)}
@@ -181,6 +192,22 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
               Download as WebM
             </button>
           )}
+          {onOpenInAnalyzer && (
+            <button
+              type="button"
+              onClick={handleOpenInAnalyzer}
+              className="px-6 py-3 rounded-lg bg-ring text-white font-medium hover:bg-red-600 transition-colors"
+            >
+              Open in Video Analyzer
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleRecordAgain}
+            className="px-6 py-3 rounded-lg bg-slate-600 text-slate-200 hover:bg-slate-500 transition-colors"
+          >
+            Record again
+          </button>
           <button
             type="button"
             onClick={handleClose}
