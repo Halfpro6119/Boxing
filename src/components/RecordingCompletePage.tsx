@@ -15,6 +15,9 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(true);
   const [videoError, setVideoError] = useState<string | null>(null);
+  const [previewSource, setPreviewSource] = useState<'mp4' | 'webm' | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
+  const webmUrlRef = useRef<string | null>(null);
 
   const handleClose = () => {
     dismissRecording();
@@ -55,40 +58,51 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
   useEffect(() => {
     if (!blob) return;
     setVideoError(null);
+    setPreviewSource(null);
+    if (webmUrlRef.current) {
+      URL.revokeObjectURL(webmUrlRef.current);
+      webmUrlRef.current = null;
+    }
     let cancelled = false;
-
-    const applyPreview = (url: string) => {
+    const applyPreview = (url: string, source: 'mp4' | 'webm') => {
       if (cancelled) return;
       setPreviewUrl(url);
+      setPreviewSource(source);
       setPreviewLoading(false);
     };
-
     if (blob.type.includes('webm') || blob.type.includes('matroska')) {
       setPreviewLoading(true);
       setPreviewUrl(null);
+      const fallbackUrl = URL.createObjectURL(blob);
+      webmUrlRef.current = fallbackUrl;
       convertWebmToMp4(blob)
         .then((mp4Blob) => {
           if (cancelled) return;
-          applyPreview(URL.createObjectURL(mp4Blob));
+          if (webmUrlRef.current) {
+            URL.revokeObjectURL(webmUrlRef.current);
+            webmUrlRef.current = null;
+          }
+          applyPreview(URL.createObjectURL(mp4Blob), 'mp4');
         })
         .catch(() => {
           if (cancelled) return;
-          setPreviewUrl(null);
-          setPreviewLoading(false);
-          setVideoError('Preview could not be generated. You can still download the recording.');
+          applyPreview(fallbackUrl, 'webm');
         });
     } else {
-      applyPreview(URL.createObjectURL(blob));
+      applyPreview(URL.createObjectURL(blob), 'mp4');
     }
-
     return () => {
       cancelled = true;
       setPreviewUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return null;
       });
+      if (webmUrlRef.current) {
+        URL.revokeObjectURL(webmUrlRef.current);
+        webmUrlRef.current = null;
+      }
     };
-  }, [blob]);
+  }, [blob, retryKey]);
 
   if (!blob) return null;
 
@@ -115,7 +129,13 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
               muted
               preload="auto"
               onError={(e) => {
-                setVideoError(e.currentTarget.error?.message || 'Video failed to load');
+                if (previewSource === 'webm') {
+                  setPreviewUrl(null);
+                  setPreviewSource(null);
+                  setVideoError('Preview not available for this recording. You can still download it below.');
+                } else {
+                  setVideoError(e.currentTarget.error?.message || 'Video failed to load');
+                }
               }}
               onLoadedData={(e) => {
                 e.currentTarget.play().catch(() => {});
@@ -124,9 +144,16 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
               style={{ minWidth: 320, minHeight: 180 }}
             />
           ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-400 p-4 text-center">
+            <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-slate-400 p-4 text-center">
               <span>No preview available</span>
               <span className="text-sm text-slate-500">You can still download the recording below.</span>
+              <button
+                type="button"
+                onClick={() => setRetryKey((k) => k + 1)}
+                className="px-4 py-2 rounded-lg bg-slate-600 text-slate-200 hover:bg-slate-500 text-sm"
+              >
+                Retry preview
+              </button>
             </div>
           )}
         </div>
