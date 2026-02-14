@@ -85,25 +85,10 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
     };
     const isWebM = !blob.type || blob.type.includes('webm') || blob.type.includes('matroska');
     if (isWebM) {
-      setPreviewLoading(true);
-      setPreviewUrl(null);
-      const fallbackUrl = URL.createObjectURL(blob);
-      webmUrlRef.current = fallbackUrl;
-      convertWebmToMp4(blob)
-        .then((mp4Blob) => {
-          if (cancelled) return;
-          if (blobRef.current !== blobForThisRun) return;
-          if (webmUrlRef.current) {
-            URL.revokeObjectURL(webmUrlRef.current);
-            webmUrlRef.current = null;
-          }
-          applyPreview(URL.createObjectURL(mp4Blob), 'mp4');
-        })
-        .catch(() => {
-          if (cancelled) return;
-          if (blobRef.current !== blobForThisRun) return;
-          applyPreview(fallbackUrl, 'webm');
-        });
+      // Show WebM preview immediately (Chrome, Edge, Firefox). Safari may show error; user can still download as MP4.
+      const webmUrl = URL.createObjectURL(blob);
+      webmUrlRef.current = webmUrl;
+      applyPreview(webmUrl, 'webm');
     } else {
       applyPreview(URL.createObjectURL(blob), 'mp4');
     }

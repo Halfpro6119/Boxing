@@ -13,7 +13,7 @@ interface RecordingModeProps {
 }
 
 export default function RecordingMode({ onBack, hidden = false }: RecordingModeProps) {
-  const { setRecording } = useRecording();
+  const { setRecording, recording: contextRecording } = useRecording();
   const [status, setStatus] = useState<'idle' | 'connecting' | 'recording' | 'paused' | 'stopped'>('idle');
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [cameraEnabled, setCameraEnabled] = useState(true);
@@ -267,6 +267,13 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
       screenVideo.srcObject = displayStream;
       screenVideo.muted = true;
       await screenVideo.play();
+      // Wait for first frame so canvas isn't black at start
+      if (screenVideo.readyState < 2) {
+        await new Promise<void>((resolve) => {
+          screenVideo.onloadeddata = () => resolve();
+          setTimeout(resolve, 500);
+        });
+      }
 
       const canvas = canvasRef.current;
       if (!canvas) {
@@ -298,9 +305,18 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
         faceVideo.srcObject = camStream;
         faceVideo.muted = true;
         await faceVideo.play();
+        if (faceVideo.readyState < 2) {
+          await new Promise<void>((resolve) => {
+            faceVideo.onloadeddata = () => resolve();
+            setTimeout(resolve, 300);
+          });
+        }
       }
 
       const audioCtx = new AudioContext();
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
       const dest = audioCtx.createMediaStreamDestination();
       if (displayStream.getAudioTracks().length) {
         const screenSource = audioCtx.createMediaStreamSource(
@@ -378,7 +394,8 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
       };
 
       mediaRecorderRef.current = recorder;
-      recorder.start();
+      // Use a timeslice so browsers emit data periodically; without it many browsers only push data on stop() and can produce empty or broken recordings.
+      recorder.start(100);
       setRecordingDuration(0);
       setStatus('recording');
       drawFrame();
@@ -496,6 +513,16 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
     });
   }, [status, recordingDuration, recordedBlob, pauseRecording, resumeRecording, stopRecording, setRecording]);
 
+  // When user dismisses the complete page, context resets to idle/null; sync local state so we don't push stale blob back.
+  useEffect(() => {
+    if (contextRecording.status === 'idle' && !contextRecording.blob && (status === 'stopped' || recordedBlob)) {
+      setStatus('idle');
+      setRecordedBlob(null);
+      setRecordingDuration(0);
+      setError(null);
+    }
+  }, [contextRecording.status, contextRecording.blob, status, recordedBlob]);
+
   const formatDuration = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
@@ -508,17 +535,14 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
     !!navigator.mediaDevices?.getDisplayMedia &&
     typeof MediaRecorder !== 'undefined';
 
-  if (hidden) {
-    return (
-      <div className="sr-only" aria-hidden>
-        <canvas ref={canvasRef} className="hidden" aria-hidden />
-      </div>
-    );
-  }
-
+  // Always render the same canvas so it never unmounts during recording (avoid black/frozen output).
   return (
-    <div className="min-h-screen p-6">
+    <div
+      className={hidden ? 'sr-only min-h-0 overflow-hidden pointer-events-none' : 'min-h-screen p-6'}
+      aria-hidden={hidden}
+    >
       <canvas ref={canvasRef} className="hidden" aria-hidden />
+      {!hidden && (
       <div className="max-w-4xl mx-auto">
         <div className="flex justify-between items-center mb-6">
           <h1 className="font-display text-3xl tracking-wider text-white">
@@ -784,6 +808,7 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
