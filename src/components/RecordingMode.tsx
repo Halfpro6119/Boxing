@@ -38,6 +38,7 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
   const screenPreviewRef = useRef<HTMLVideoElement>(null);
   const recordingStreamsRef = useRef<MediaStream[]>([]);
   const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const drawFrameRef = useRef<number | null>(null);
 
   const enumerateDevices = useCallback(async () => {
     try {
@@ -91,6 +92,10 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
       if (durationIntervalRef.current) {
         clearInterval(durationIntervalRef.current);
         durationIntervalRef.current = null;
+      }
+      if (drawFrameRef.current != null) {
+        cancelAnimationFrame(drawFrameRef.current);
+        drawFrameRef.current = null;
       }
       const rec = mediaRecorderRef.current;
       if (rec?.state !== 'inactive') {
@@ -149,6 +154,16 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
     setMicStream(null);
   }, [micStream]);
 
+  useEffect(() => {
+    const video = screenPreviewRef.current;
+    if (video && screenStream) {
+      video.srcObject = screenStream;
+      video.play().catch(() => {});
+    } else if (video) {
+      video.srcObject = null;
+    }
+  }, [screenStream]);
+
   const connectScreen = useCallback(async () => {
     setError(null);
     if (!navigator.mediaDevices?.getDisplayMedia) {
@@ -169,12 +184,8 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
         }
       }
       setScreenStream(stream);
-      if (screenPreviewRef.current) {
-        screenPreviewRef.current.srcObject = stream;
-      }
       stream.getVideoTracks()[0].onended = () => {
         setScreenStream(null);
-        if (screenPreviewRef.current) screenPreviewRef.current.srcObject = null;
       };
     } catch (err) {
       console.error('Failed to connect screen:', err);
@@ -191,7 +202,6 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
   const disconnectScreen = useCallback(() => {
     screenStream?.getTracks().forEach((t) => t.stop());
     setScreenStream(null);
-    if (screenPreviewRef.current) screenPreviewRef.current.srcObject = null;
   }, [screenStream]);
 
   const startRecording = useCallback(async () => {
@@ -320,8 +330,33 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
         }
       };
 
+      // Draw display stream to canvas and record from canvas - fixes black screen when
+      // MediaRecorder gets no frames from getDisplayMedia stream directly
+      const drawToCanvas = () => {
+        if (screenVideo.readyState >= 2) {
+          ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
+          if (camStream && faceVideo.readyState >= 2) {
+            const faceW = Math.floor(canvas.width * 0.2);
+            const faceH = Math.floor(faceW * (faceVideo.videoHeight / faceVideo.videoWidth));
+            const x = canvas.width - faceW - 16;
+            const y = 16;
+            ctx.fillStyle = 'rgba(0,0,0,0.4)';
+            ctx.fillRect(x - 4, y - 4, faceW + 8, faceH + 8);
+            ctx.drawImage(faceVideo, x, y, faceW, faceH);
+          }
+        }
+      };
+      drawToCanvas(); // Prime canvas before starting recorder
+      const drawFrame = () => {
+        drawToCanvas();
+        if (mediaRecorderRef.current?.state === 'recording' || mediaRecorderRef.current?.state === 'paused') {
+          drawFrameRef.current = requestAnimationFrame(drawFrame);
+        }
+      };
+
+      const canvasStream = canvas.captureStream(30);
       const combinedStream = new MediaStream([
-        ...displayStream.getVideoTracks(),
+        ...canvasStream.getVideoTracks(),
         ...dest.stream.getAudioTracks(),
       ]);
       const result = createRecorder(combinedStream);
@@ -334,10 +369,10 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
       };
 
       mediaRecorderRef.current = recorder;
-      // Use start() without timeslice for a single complete blob on stop - more reliable playback
       recorder.start();
       setRecordingDuration(0);
       setStatus('recording');
+      drawFrame();
 
       durationIntervalRef.current = setInterval(() => {
         setRecordingDuration((d) => d + 1);
@@ -348,6 +383,10 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
       if (audioStream) recordingStreamsRef.current.push(audioStream);
 
       recorder.onstop = () => {
+        if (drawFrameRef.current != null) {
+          cancelAnimationFrame(drawFrameRef.current);
+          drawFrameRef.current = null;
+        }
         if (durationIntervalRef.current) {
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
