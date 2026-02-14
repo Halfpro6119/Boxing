@@ -14,6 +14,8 @@
     "start": "node server/index.js"
   },
   "dependencies": {
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "react": "^18.3.1",
@@ -21,12 +23,12 @@
     "youtube-dl-exec": "^3.0.0"
   },
   "devDependencies": {
-    "concurrently": "^9.0.1",
     "@eslint/js": "^9.13.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
     "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.1",
     "eslint": "^9.13.0",
     "eslint-plugin-react-hooks": "^5.0.0",
     "eslint-plugin-react-refresh": "^0.4.14",

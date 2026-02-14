@@ -1,5 +1,6 @@
-import { useRef, useEffect, useMemo } from 'react';
+import { useRef, useEffect, useMemo, useState } from 'react';
 import { useRecording, formatDuration } from '../context/RecordingContext';
+import { convertWebmToMp4 } from '../utils/convertToMp4';
 
 interface RecordingCompletePageProps {
   onClose: () => void;
@@ -9,23 +10,46 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
   const { recording, dismissRecording } = useRecording();
   const { blob, duration } = recording;
   const videoRef = useRef<HTMLVideoElement>(null);
-
-  if (!blob) return null;
+  const [converting, setConverting] = useState(false);
+  const [convertError, setConvertError] = useState<string | null>(null);
 
   const handleClose = () => {
     dismissRecording();
     onClose();
   };
 
-  const handleDownload = () => {
-    const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `boxing-recording-${Date.now()}.${ext}`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleDownload = async () => {
+    if (!blob) return;
+    setConvertError(null);
+    try {
+      let downloadBlob = blob;
+      let ext = 'webm';
+      if (blob.type.includes('webm')) {
+        setConverting(true);
+        try {
+          downloadBlob = await convertWebmToMp4(blob);
+          ext = 'mp4';
+        } catch (err) {
+          setConvertError(err instanceof Error ? err.message : 'Conversion failed');
+          return;
+        } finally {
+          setConverting(false);
+        }
+      } else if (blob.type.includes('mp4')) {
+        ext = 'mp4';
+      }
+      const url = URL.createObjectURL(downloadBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `boxing-recording-${Date.now()}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setConvertError(err instanceof Error ? err.message : 'Download failed');
+    }
   };
+
+  if (!blob) return null;
 
   const videoUrl = useMemo(() => URL.createObjectURL(blob), [blob]);
 
@@ -52,13 +76,17 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
           />
         </div>
 
+        {convertError && (
+          <p className="text-red-400 text-sm mb-2">{convertError}</p>
+        )}
         <div className="flex gap-3">
           <button
             type="button"
             onClick={handleDownload}
-            className="px-6 py-3 rounded-lg bg-accent text-slate-900 font-medium hover:bg-orange-400 transition-colors"
+            disabled={converting}
+            className="px-6 py-3 rounded-lg bg-accent text-slate-900 font-medium hover:bg-orange-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Download Recording
+            {converting ? 'Converting to MP4...' : 'Download as MP4'}
           </button>
           <button
             type="button"

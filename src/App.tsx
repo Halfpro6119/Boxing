@@ -45,14 +45,15 @@ function AppContent() {
       <main className="flex-1 min-h-0 relative">
         {(mode === 'recording' || isRecording) && (
           <div
+            key="recording-container"
             className={
               isRecording
                 ? 'absolute inset-0 w-px h-px overflow-hidden opacity-0 pointer-events-none -z-10'
-                : ''
+                : 'min-h-full'
             }
             aria-hidden={isRecording}
           >
-            <RecordingMode onBack={() => setMode('analyzer')} hidden={isRecording} />
+            <RecordingMode key="recording-mode" onBack={() => setMode('analyzer')} hidden={isRecording} />
           </div>
         )}
         {mode === 'analyzer' && (
