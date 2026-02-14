@@ -3,10 +3,11 @@ import VideoPlayerWorkspace, { type VideoPlayerWorkspaceHandle } from './compone
 import RecordingMode from './components/RecordingMode';
 import RecordingToolbar from './components/RecordingToolbar';
 import RecordingCompletePage from './components/RecordingCompletePage';
+import VideoEditorPage from './components/VideoEditorPage';
 import { RecordingProvider, useRecording } from './context/RecordingContext';
 
 function AppContent() {
-  const [mode, setMode] = useState<'analyzer' | 'recording'>('analyzer');
+  const [mode, setMode] = useState<'analyzer' | 'recording' | 'editor'>('analyzer');
   const workspaceRef = useRef<VideoPlayerWorkspaceHandle>(null);
   const {
     recording,
@@ -51,6 +52,15 @@ function AppContent() {
           >
             Recording Mode
           </button>
+          <button
+            type="button"
+            onClick={() => setMode('editor')}
+            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+              mode === 'editor' ? 'bg-ring text-white' : 'bg-slate-700/80 text-slate-400 hover:bg-slate-600'
+            }`}
+          >
+            Video Editor
+          </button>
         </div>
       </header>
 
@@ -90,14 +100,22 @@ function AppContent() {
             </button>
           </div>
         )}
+        {mode === 'editor' && (
+          <VideoEditorPage
+            blob={recording.blob}
+            duration={recording.duration}
+            onBack={() => setMode('recording')}
+          />
+        )}
       </main>
 
       <RecordingToolbar />
 
-      {showCompletePage && (
+      {showCompletePage && mode !== 'editor' && (
         <RecordingCompletePage
           onClose={() => setMode('recording')}
           onOpenInAnalyzer={handleOpenInAnalyzer}
+          onOpenInEditor={() => setMode('editor')}
         />
       )}
     </div>

@@ -5,9 +5,10 @@ import { convertWebmToMp4 } from '../utils/convertToMp4';
 interface RecordingCompletePageProps {
   onClose: () => void;
   onOpenInAnalyzer?: (blob: Blob) => void;
+  onOpenInEditor?: () => void;
 }
 
-export default function RecordingCompletePage({ onClose, onOpenInAnalyzer }: RecordingCompletePageProps) {
+export default function RecordingCompletePage({ onClose, onOpenInAnalyzer, onOpenInEditor }: RecordingCompletePageProps) {
   const { recording, dismissRecording } = useRecording();
   const { blob, duration } = recording;
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -34,6 +35,10 @@ export default function RecordingCompletePage({ onClose, onOpenInAnalyzer }: Rec
   const handleOpenInAnalyzer = () => {
     if (!blob) return;
     onOpenInAnalyzer?.(blob);
+  };
+
+  const handleOpenInEditor = () => {
+    onOpenInEditor?.();
   };
 
   const handleDownload = async (asWebM = false) => {
@@ -199,6 +204,15 @@ export default function RecordingCompletePage({ onClose, onOpenInAnalyzer }: Rec
               className="px-6 py-3 rounded-lg bg-ring text-white font-medium hover:bg-red-600 transition-colors"
             >
               Open in Video Analyzer
+            </button>
+          )}
+          {onOpenInEditor && (
+            <button
+              type="button"
+              onClick={handleOpenInEditor}
+              className="px-6 py-3 rounded-lg bg-emerald-600 text-white font-medium hover:bg-emerald-500 transition-colors"
+            >
+              Open in Video Editor
             </button>
           )}
           <button
