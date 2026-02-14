@@ -52,22 +52,39 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
     }
   };
 
-  const triedMp4Fallback = useRef(false);
+  const triedAlternateFormat = useRef(false);
 
   useEffect(() => {
     if (!blob) return;
     setVideoError(null);
-    triedMp4Fallback.current = false;
+    triedAlternateFormat.current = false;
     let cancelled = false;
-    const tryPreview = (url: string) => {
+    const webmUrl = URL.createObjectURL(blob);
+
+    const applyPreview = (url: string) => {
       if (cancelled) return;
       setPreviewUrl(url);
       setPreviewLoading(false);
     };
-    // Try WebM directly first (canvas recording produces playable VP9/VP8)
-    tryPreview(URL.createObjectURL(blob));
+
+    if (blob.type.includes('webm') || blob.type.includes('matroska')) {
+      setPreviewLoading(true);
+      convertWebmToMp4(blob)
+        .then((mp4Blob) => {
+          if (cancelled) return;
+          applyPreview(URL.createObjectURL(mp4Blob));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          applyPreview(webmUrl);
+        });
+    } else {
+      applyPreview(webmUrl);
+    }
+
     return () => {
       cancelled = true;
+      URL.revokeObjectURL(webmUrl);
       setPreviewUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return null;
@@ -104,10 +121,9 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
                 if (
                   blob &&
                   (blob.type.includes('webm') || blob.type.includes('matroska')) &&
-                  !triedMp4Fallback.current &&
-                  (errMsg.includes('Format') || errMsg.includes('decode') || errMsg.includes('DEMUXER') || errMsg.includes('MEDIA'))
+                  !triedAlternateFormat.current
                 ) {
-                  triedMp4Fallback.current = true;
+                  triedAlternateFormat.current = true;
                   setVideoError(null);
                   setPreviewLoading(true);
                   const oldUrl = e.currentTarget.src;
@@ -117,7 +133,7 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
                     const mp4Blob = await convertWebmToMp4(blob);
                     setPreviewUrl(URL.createObjectURL(mp4Blob));
                   } catch {
-                    setVideoError('Preview not available. You can still download the recording.');
+                    setPreviewUrl(URL.createObjectURL(blob));
                   } finally {
                     setPreviewLoading(false);
                   }
@@ -132,8 +148,9 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
               style={{ minWidth: 320, minHeight: 180 }}
             />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-slate-400">
-              No preview available
+            <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-400 p-4 text-center">
+              <span>No preview available</span>
+              <span className="text-sm text-slate-500">You can still download the recording below.</span>
             </div>
           )}
         </div>
