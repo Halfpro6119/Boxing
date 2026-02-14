@@ -21,19 +21,19 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
     onClose();
   };
 
-  const handleDownload = async () => {
+  const handleDownload = async (asWebM = false) => {
     if (!blob) return;
     setConvertError(null);
     try {
       let downloadBlob = blob;
-      let ext = 'webm';
-      if (blob.type.includes('webm')) {
+      let ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+      if (blob.type.includes('webm') && !asWebM) {
         setConverting(true);
         try {
           downloadBlob = await convertWebmToMp4(blob);
           ext = 'mp4';
         } catch (err) {
-          setConvertError(err instanceof Error ? err.message : 'Conversion failed');
+          setConvertError(err instanceof Error ? err.message : 'Conversion failed. Try "Download as WebM".');
           return;
         } finally {
           setConverting(false);
@@ -52,14 +52,10 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
     }
   };
 
-  const triedAlternateFormat = useRef(false);
-
   useEffect(() => {
     if (!blob) return;
     setVideoError(null);
-    triedAlternateFormat.current = false;
     let cancelled = false;
-    const webmUrl = URL.createObjectURL(blob);
 
     const applyPreview = (url: string) => {
       if (cancelled) return;
@@ -69,6 +65,7 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
 
     if (blob.type.includes('webm') || blob.type.includes('matroska')) {
       setPreviewLoading(true);
+      setPreviewUrl(null);
       convertWebmToMp4(blob)
         .then((mp4Blob) => {
           if (cancelled) return;
@@ -76,15 +73,16 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
         })
         .catch(() => {
           if (cancelled) return;
-          applyPreview(webmUrl);
+          setPreviewUrl(null);
+          setPreviewLoading(false);
+          setVideoError('Preview could not be generated. You can still download the recording.');
         });
     } else {
-      applyPreview(webmUrl);
+      applyPreview(URL.createObjectURL(blob));
     }
 
     return () => {
       cancelled = true;
-      URL.revokeObjectURL(webmUrl);
       setPreviewUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return null;
@@ -116,30 +114,8 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
               playsInline
               muted
               preload="auto"
-              onError={async (e) => {
-                const errMsg = e.currentTarget.error?.message || '';
-                if (
-                  blob &&
-                  (blob.type.includes('webm') || blob.type.includes('matroska')) &&
-                  !triedAlternateFormat.current
-                ) {
-                  triedAlternateFormat.current = true;
-                  setVideoError(null);
-                  setPreviewLoading(true);
-                  const oldUrl = e.currentTarget.src;
-                  if (oldUrl?.startsWith('blob:')) URL.revokeObjectURL(oldUrl);
-                  setPreviewUrl(null);
-                  try {
-                    const mp4Blob = await convertWebmToMp4(blob);
-                    setPreviewUrl(URL.createObjectURL(mp4Blob));
-                  } catch {
-                    setPreviewUrl(URL.createObjectURL(blob));
-                  } finally {
-                    setPreviewLoading(false);
-                  }
-                } else {
-                  setVideoError(errMsg || 'Video failed to load');
-                }
+              onError={(e) => {
+                setVideoError(e.currentTarget.error?.message || 'Video failed to load');
               }}
               onLoadedData={(e) => {
                 e.currentTarget.play().catch(() => {});
@@ -158,15 +134,25 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
         {(convertError || videoError) && (
           <p className="text-red-400 text-sm mb-2">{convertError || videoError}</p>
         )}
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <button
             type="button"
-            onClick={handleDownload}
+            onClick={() => handleDownload(false)}
             disabled={converting}
             className="px-6 py-3 rounded-lg bg-accent text-slate-900 font-medium hover:bg-orange-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {converting ? 'Converting to MP4...' : 'Download as MP4'}
           </button>
+          {(blob?.type.includes('webm') || blob?.type.includes('matroska')) && (
+            <button
+              type="button"
+              onClick={() => handleDownload(true)}
+              disabled={converting}
+              className="px-6 py-3 rounded-lg bg-slate-600 text-slate-200 hover:bg-slate-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Download as WebM
+            </button>
+          )}
           <button
             type="button"
             onClick={handleClose}
