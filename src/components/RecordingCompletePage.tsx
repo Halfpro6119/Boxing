@@ -18,6 +18,7 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
   const [previewSource, setPreviewSource] = useState<'mp4' | 'webm' | null>(null);
   const [retryKey, setRetryKey] = useState(0);
   const webmUrlRef = useRef<string | null>(null);
+  const blobRef = useRef<Blob | null>(null);
 
   const handleClose = () => {
     dismissRecording();
@@ -56,7 +57,17 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
   };
 
   useEffect(() => {
-    if (!blob) return;
+    if (!blob || blob.size < 256) {
+      setPreviewLoading(false);
+      setPreviewUrl(null);
+      setVideoError(
+        !blob || blob.size === 0
+          ? 'Recording produced no data.'
+          : 'Recording is too short to preview.'
+      );
+      return;
+    }
+    blobRef.current = blob;
     setVideoError(null);
     setPreviewSource(null);
     if (webmUrlRef.current) {
@@ -64,13 +75,16 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
       webmUrlRef.current = null;
     }
     let cancelled = false;
+    const blobForThisRun = blob;
     const applyPreview = (url: string, source: 'mp4' | 'webm') => {
       if (cancelled) return;
+      if (blobRef.current !== blobForThisRun) return;
       setPreviewUrl(url);
       setPreviewSource(source);
       setPreviewLoading(false);
     };
-    if (blob.type.includes('webm') || blob.type.includes('matroska')) {
+    const isWebM = !blob.type || blob.type.includes('webm') || blob.type.includes('matroska');
+    if (isWebM) {
       setPreviewLoading(true);
       setPreviewUrl(null);
       const fallbackUrl = URL.createObjectURL(blob);
@@ -78,6 +92,7 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
       convertWebmToMp4(blob)
         .then((mp4Blob) => {
           if (cancelled) return;
+          if (blobRef.current !== blobForThisRun) return;
           if (webmUrlRef.current) {
             URL.revokeObjectURL(webmUrlRef.current);
             webmUrlRef.current = null;
@@ -86,6 +101,7 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
         })
         .catch(() => {
           if (cancelled) return;
+          if (blobRef.current !== blobForThisRun) return;
           applyPreview(fallbackUrl, 'webm');
         });
     } else {
@@ -170,7 +186,7 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
           >
             {converting ? 'Converting to MP4...' : 'Download as MP4'}
           </button>
-          {(blob?.type.includes('webm') || blob?.type.includes('matroska')) && (
+          {(!blob?.type || blob?.type.includes('webm') || blob?.type.includes('matroska')) && (
             <button
               type="button"
               onClick={() => handleDownload(true)}

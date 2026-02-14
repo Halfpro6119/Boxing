@@ -16,11 +16,27 @@ async function getFFmpeg(): Promise<FFmpeg> {
 }
 
 const sharedArgs = ['-avoid_negative_ts', 'make_zero', '-fflags', '+genpts'];
+const MIN_BLOB_SIZE = 256;
+
+async function ensureCleanFs(ffmpeg: FFmpeg): Promise<void> {
+  try {
+    await ffmpeg.deleteFile('input.webm');
+  } catch {
+    /* ignore */
+  }
+  try {
+    await ffmpeg.deleteFile('output.mp4');
+  } catch {
+    /* ignore */
+  }
+}
 
 export async function convertWebmToMp4(blob: Blob): Promise<Blob> {
   const ffmpeg = await getFFmpeg();
+  await ensureCleanFs(ffmpeg);
   const data = new Uint8Array(await blob.arrayBuffer());
   if (data.length === 0) throw new Error('Recording is empty');
+  if (data.length < MIN_BLOB_SIZE) throw new Error('Recording is too short to convert');
   await ffmpeg.writeFile('input.webm', data);
   const presets = [
     [...sharedArgs, '-i', 'input.webm', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-c:a', 'aac', '-movflags', '+faststart', 'output.mp4'],
@@ -39,11 +55,16 @@ export async function convertWebmToMp4(blob: Blob): Promise<Blob> {
       break;
     } catch (e) {
       lastErr = e;
+      await ensureCleanFs(ffmpeg);
+      await ffmpeg.writeFile('input.webm', data);
     }
   }
-  if (lastErr) throw lastErr;
-  const output = await ffmpeg.readFile('output.mp4');
-  await ffmpeg.deleteFile('input.webm');
-  await ffmpeg.deleteFile('output.mp4');
-  return new Blob([output], { type: 'video/mp4' });
+  try {
+    if (lastErr) throw lastErr;
+    const output = await ffmpeg.readFile('output.mp4');
+    if (!output || (output as Uint8Array).length === 0) throw new Error('Conversion produced empty output');
+    return new Blob([output], { type: 'video/mp4' });
+  } finally {
+    await ensureCleanFs(ffmpeg);
+  }
 }
