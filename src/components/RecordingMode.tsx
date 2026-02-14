@@ -294,7 +294,9 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
         micSource.connect(dest);
       }
 
-      const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+      // Only vp9/vp8 produce valid WebM - 'video/webm' and avc1 produce Matroska which Chrome can't play
+      const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8'];
+      const hasAudio = dest.stream.getAudioTracks().length > 0;
       const createRecorder = (stream: MediaStream): { recorder: MediaRecorder; mimeType: string } => {
         for (const mime of mimeTypes) {
           if (MediaRecorder.isTypeSupported(mime)) {
@@ -302,6 +304,7 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
               const rec = new MediaRecorder(stream, {
                 mimeType: mime,
                 videoBitsPerSecond: 5000000,
+                ...(hasAudio && { audioBitsPerSecond: 128000 }),
               });
               return { recorder: rec, mimeType: mime };
             } catch {
@@ -311,7 +314,7 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
         }
         try {
           const rec = new MediaRecorder(stream);
-          return { recorder: rec, mimeType: rec.mimeType || 'video/webm' };
+          return { recorder: rec, mimeType: rec.mimeType || 'video/webm;codecs=vp9' };
         } catch (e) {
           throw new Error('Recording not supported in this browser. Try Chrome or Edge.');
         }
@@ -357,7 +360,8 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
           recordingStreamsRef.current = [];
           return;
         }
-        const blob = new Blob(chunks, { type: mimeType });
+        const actualMime = recorder.mimeType.startsWith('video/webm') ? recorder.mimeType : mimeType;
+        const blob = new Blob(chunks, { type: actualMime });
         setRecordedBlob(blob);
         setStatus('stopped');
         recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));

@@ -1,14 +1,9 @@
-import { useRef, useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRecording, formatDuration } from '../context/RecordingContext';
 import { convertWebmToMp4 } from '../utils/convertToMp4';
 
 interface RecordingCompletePageProps {
   onClose: () => void;
-}
-
-function canPlayWebM(): boolean {
-  const v = document.createElement('video');
-  return v.canPlayType('video/webm; codecs="vp8,vp9"') !== '';
 }
 
 export default function RecordingCompletePage({ onClose }: RecordingCompletePageProps) {
@@ -20,7 +15,6 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(true);
   const [videoError, setVideoError] = useState<string | null>(null);
-  const hasTriedMp4Fallback = useRef(false);
 
   const handleClose = () => {
     dismissRecording();
@@ -61,15 +55,15 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
   useEffect(() => {
     if (!blob) return;
     setVideoError(null);
-    hasTriedMp4Fallback.current = false;
     let cancelled = false;
     const tryPreview = (url: string) => {
       if (cancelled) return;
       setPreviewUrl(url);
       setPreviewLoading(false);
     };
-    const tryConvertForPreview = () => {
-      if (cancelled) return;
+    if (blob.type.includes('webm') || blob.type.includes('matroska')) {
+      // Always convert WebM/Matroska to MP4 for preview - Chrome often produces
+      // unplayable WebM (DEMUXER_ERROR_COULD_NOT_OPEN) from MediaRecorder
       setPreviewLoading(true);
       convertWebmToMp4(blob)
         .then((mp4Blob) => {
@@ -78,16 +72,9 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
         })
         .catch(() => {
           if (cancelled) return;
-          setVideoError('Preview not available in this browser. You can still download the recording.');
+          setVideoError('Preview not available. You can still download the recording.');
           setPreviewLoading(false);
         });
-    };
-    if (blob.type.includes('webm')) {
-      if (canPlayWebM()) {
-        tryPreview(URL.createObjectURL(blob));
-      } else {
-        tryConvertForPreview();
-      }
     } else {
       tryPreview(URL.createObjectURL(blob));
     }
@@ -124,31 +111,8 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
               playsInline
               muted
               preload="auto"
-              onError={async (e) => {
-                const target = e.currentTarget;
-                const errMsg = target.error?.message || 'Video failed to load';
-                if (
-                  blob.type.includes('webm') &&
-                  !hasTriedMp4Fallback.current &&
-                  (errMsg.includes('Format') || errMsg.includes('decode') || errMsg.includes('MEDIA'))
-                ) {
-                  hasTriedMp4Fallback.current = true;
-                  const oldUrl = target.src;
-                  if (oldUrl?.startsWith('blob:')) URL.revokeObjectURL(oldUrl);
-                  setVideoError(null);
-                  setPreviewLoading(true);
-                  setPreviewUrl(null);
-                  try {
-                    const mp4Blob = await convertWebmToMp4(blob);
-                    setPreviewUrl(URL.createObjectURL(mp4Blob));
-                  } catch {
-                    setVideoError('Preview not available. You can still download the recording.');
-                  } finally {
-                    setPreviewLoading(false);
-                  }
-                } else {
-                  setVideoError(errMsg);
-                }
+              onError={(e) => {
+                setVideoError(e.currentTarget.error?.message || 'Video failed to load');
               }}
               onLoadedData={(e) => {
                 e.currentTarget.play().catch(() => {});
