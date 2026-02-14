@@ -19,6 +19,7 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
   const [convertError, setConvertError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(true);
+  const [videoError, setVideoError] = useState<string | null>(null);
 
   const handleClose = () => {
     dismissRecording();
@@ -58,24 +59,31 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
 
   useEffect(() => {
     if (!blob) return;
+    setVideoError(null);
     let cancelled = false;
-    if (blob.type.includes('webm') && !canPlayWebM()) {
+    const tryPreview = (url: string) => {
+      if (cancelled) return;
+      setPreviewUrl(url);
+      setPreviewLoading(false);
+    };
+    if (blob.type.includes('webm')) {
       setPreviewLoading(true);
       convertWebmToMp4(blob)
         .then((mp4Blob) => {
           if (cancelled) return;
-          const url = URL.createObjectURL(mp4Blob);
-          setPreviewUrl(url);
-          setPreviewLoading(false);
+          tryPreview(URL.createObjectURL(mp4Blob));
         })
         .catch(() => {
           if (cancelled) return;
-          setPreviewUrl(URL.createObjectURL(blob));
-          setPreviewLoading(false);
+          if (canPlayWebM()) {
+            tryPreview(URL.createObjectURL(blob));
+          } else {
+            setVideoError('Preview not available in this browser. You can still download the recording.');
+            setPreviewLoading(false);
+          }
         });
     } else {
-      setPreviewUrl(URL.createObjectURL(blob));
-      setPreviewLoading(false);
+      tryPreview(URL.createObjectURL(blob));
     }
     return () => {
       cancelled = true;
@@ -109,7 +117,16 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
               autoPlay
               playsInline
               muted
+              preload="auto"
+              onError={(e) => {
+                const target = e.currentTarget;
+                setVideoError(target.error?.message || 'Video failed to load');
+              }}
+              onLoadedData={(e) => {
+                e.currentTarget.play().catch(() => {});
+              }}
               className="w-full h-full object-contain"
+              style={{ minWidth: 320, minHeight: 180 }}
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-slate-400">
@@ -118,8 +135,8 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
           )}
         </div>
 
-        {convertError && (
-          <p className="text-red-400 text-sm mb-2">{convertError}</p>
+        {(convertError || videoError) && (
+          <p className="text-red-400 text-sm mb-2">{convertError || videoError}</p>
         )}
         <div className="flex gap-3">
           <button

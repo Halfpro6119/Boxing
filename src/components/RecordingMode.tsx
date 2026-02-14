@@ -317,70 +317,13 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
         }
       };
 
-      let recorder: MediaRecorder;
-      let mimeType: string;
-      let keepDrawing = true;
-
-      try {
-        const canvasStream = canvas.captureStream(30);
-        const audioTracks = dest.stream.getAudioTracks();
-        audioTracks.forEach((t) => canvasStream.addTrack(t));
-        const result = createRecorder(canvasStream);
-        recorder = result.recorder;
-        mimeType = result.mimeType;
-
-        const bubbleSize = 160;
-        const bubbleX = canvas.width - bubbleSize - 24;
-        const bubbleY = 24;
-
-        const draw = () => {
-          if (!keepDrawing) return;
-          ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
-
-          if (camStream && faceVideo.readyState >= 2) {
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(
-              bubbleX + bubbleSize / 2,
-              bubbleY + bubbleSize / 2,
-              bubbleSize / 2 + 4,
-              0,
-              Math.PI * 2
-            );
-            ctx.fillStyle = '#1d3557';
-            ctx.fill();
-            ctx.strokeStyle = '#e63946';
-            ctx.lineWidth = 4;
-            ctx.stroke();
-            ctx.clip();
-            ctx.drawImage(
-              faceVideo,
-              bubbleX,
-              bubbleY,
-              bubbleSize,
-              bubbleSize
-            );
-            ctx.restore();
-          }
-
-          if (keepDrawing) requestAnimationFrame(draw);
-        };
-        draw();
-      } catch (canvasErr) {
-        const msg = canvasErr instanceof Error ? canvasErr.message : String(canvasErr);
-        if (msg.toLowerCase().includes('not supported') || msg.toLowerCase().includes('notsupported')) {
-          const combinedStream = new MediaStream([
-            ...displayStream.getVideoTracks(),
-            ...dest.stream.getAudioTracks(),
-          ]);
-          const result = createRecorder(combinedStream);
-          recorder = result.recorder;
-          mimeType = result.mimeType;
-          keepDrawing = false;
-        } else {
-          throw canvasErr;
-        }
-      }
+      const combinedStream = new MediaStream([
+        ...displayStream.getVideoTracks(),
+        ...dest.stream.getAudioTracks(),
+      ]);
+      const result = createRecorder(combinedStream);
+      const recorder = result.recorder;
+      const mimeType = result.mimeType;
 
       chunksRef.current = [];
       recorder.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
@@ -399,7 +342,6 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
       if (audioStream) recordingStreamsRef.current.push(audioStream);
 
       recorder.onstop = () => {
-        keepDrawing = false;
         if (durationIntervalRef.current) {
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
