@@ -154,6 +154,16 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
     setMicStream(null);
   }, [micStream]);
 
+  // Sync screen stream to preview video when either changes (ref can attach after stream is set)
+  useEffect(() => {
+    const video = screenPreviewRef.current;
+    if (!video || !screenStream) return;
+    if (video.srcObject !== screenStream) {
+      video.srcObject = screenStream;
+      video.play().catch(() => {});
+    }
+  }, [screenStream]);
+
   const connectScreen = useCallback(async () => {
     setError(null);
     if (!navigator.mediaDevices?.getDisplayMedia) {
@@ -544,19 +554,16 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
                 <div className="flex-1 min-w-[200px]">
                   {screenStream ? (
                     <div className="space-y-2">
-                      <video
-                        ref={(el) => {
-                          screenPreviewRef.current = el;
-                          if (el && screenStream) {
-                            el.srcObject = screenStream;
-                            el.play().catch(() => {});
-                          }
-                        }}
-                        autoPlay
-                        muted
-                        playsInline
-                        className="w-full max-w-md aspect-video rounded-lg bg-black object-contain border border-slate-600"
-                      />
+                      <div className="w-full max-w-2xl min-h-[240px] rounded-lg overflow-hidden border border-slate-600 bg-black">
+                        <video
+                          ref={screenPreviewRef}
+                          autoPlay
+                          muted
+                          playsInline
+                          className="w-full h-full min-h-[240px] object-contain"
+                          style={{ aspectRatio: '16/9' }}
+                        />
+                      </div>
                       <button
                         type="button"
                         onClick={disconnectScreen}
