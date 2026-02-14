@@ -20,6 +20,7 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(true);
   const [videoError, setVideoError] = useState<string | null>(null);
+  const hasTriedMp4Fallback = useRef(false);
 
   const handleClose = () => {
     dismissRecording();
@@ -60,27 +61,32 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
   useEffect(() => {
     if (!blob) return;
     setVideoError(null);
+    hasTriedMp4Fallback.current = false;
     let cancelled = false;
     const tryPreview = (url: string) => {
       if (cancelled) return;
       setPreviewUrl(url);
       setPreviewLoading(false);
     };
+    const tryConvertForPreview = () => {
+      if (cancelled) return;
+      setPreviewLoading(true);
+      convertWebmToMp4(blob)
+        .then((mp4Blob) => {
+          if (cancelled) return;
+          tryPreview(URL.createObjectURL(mp4Blob));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setVideoError('Preview not available in this browser. You can still download the recording.');
+          setPreviewLoading(false);
+        });
+    };
     if (blob.type.includes('webm')) {
       if (canPlayWebM()) {
         tryPreview(URL.createObjectURL(blob));
       } else {
-        setPreviewLoading(true);
-        convertWebmToMp4(blob)
-          .then((mp4Blob) => {
-            if (cancelled) return;
-            tryPreview(URL.createObjectURL(mp4Blob));
-          })
-          .catch(() => {
-            if (cancelled) return;
-            setVideoError('Preview not available in this browser. You can still download the recording.');
-            setPreviewLoading(false);
-          });
+        tryConvertForPreview();
       }
     } else {
       tryPreview(URL.createObjectURL(blob));
@@ -118,9 +124,31 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
               playsInline
               muted
               preload="auto"
-              onError={(e) => {
+              onError={async (e) => {
                 const target = e.currentTarget;
-                setVideoError(target.error?.message || 'Video failed to load');
+                const errMsg = target.error?.message || 'Video failed to load';
+                if (
+                  blob.type.includes('webm') &&
+                  !hasTriedMp4Fallback.current &&
+                  (errMsg.includes('Format') || errMsg.includes('decode') || errMsg.includes('MEDIA'))
+                ) {
+                  hasTriedMp4Fallback.current = true;
+                  const oldUrl = target.src;
+                  if (oldUrl?.startsWith('blob:')) URL.revokeObjectURL(oldUrl);
+                  setVideoError(null);
+                  setPreviewLoading(true);
+                  setPreviewUrl(null);
+                  try {
+                    const mp4Blob = await convertWebmToMp4(blob);
+                    setPreviewUrl(URL.createObjectURL(mp4Blob));
+                  } catch {
+                    setVideoError('Preview not available. You can still download the recording.');
+                  } finally {
+                    setPreviewLoading(false);
+                  }
+                } else {
+                  setVideoError(errMsg);
+                }
               }}
               onLoadedData={(e) => {
                 e.currentTarget.play().catch(() => {});

@@ -326,10 +326,13 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
       const mimeType = result.mimeType;
 
       chunksRef.current = [];
-      recorder.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
 
       mediaRecorderRef.current = recorder;
-      recorder.start(100);
+      // Use start() without timeslice for a single complete blob on stop - more reliable playback
+      recorder.start();
       setRecordingDuration(0);
       setStatus('recording');
 
@@ -346,7 +349,15 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
         }
-        const blob = new Blob(chunksRef.current, { type: mimeType });
+        const chunks = chunksRef.current;
+        if (chunks.length === 0) {
+          setError('Recording produced no data. Try recording for at least a few seconds.');
+          setStatus('idle');
+          recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+          recordingStreamsRef.current = [];
+          return;
+        }
+        const blob = new Blob(chunks, { type: mimeType });
         setRecordedBlob(blob);
         setStatus('stopped');
         recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
