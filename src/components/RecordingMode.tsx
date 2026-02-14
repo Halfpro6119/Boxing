@@ -10,9 +10,10 @@ interface MediaDeviceInfo {
 interface RecordingModeProps {
   onBack: () => void;
   hidden?: boolean;
+  onRecordingComplete?: (blob: Blob, duration: number) => void;
 }
 
-export default function RecordingMode({ onBack, hidden = false }: RecordingModeProps) {
+export default function RecordingMode({ onBack, hidden = false, onRecordingComplete }: RecordingModeProps) {
   const { setRecording, recording: contextRecording } = useRecording();
   const [status, setStatus] = useState<'idle' | 'connecting' | 'recording' | 'paused' | 'stopped'>('idle');
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -47,7 +48,11 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
   const micStreamRef = useRef<MediaStream | null>(null);
   const facePositionRef = useRef(facePosition);
   const countdownFiredRef = useRef(false);
+  const recordingDurationRef = useRef(0);
+  const onRecordingCompleteRef = useRef(onRecordingComplete);
   facePositionRef.current = facePosition;
+  recordingDurationRef.current = recordingDuration;
+  onRecordingCompleteRef.current = onRecordingComplete;
 
   const enumerateDevices = useCallback(async () => {
     try {
@@ -453,8 +458,10 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
         }
         const actualMime = recorder.mimeType.startsWith('video/webm') ? recorder.mimeType : mimeType;
         const blob = new Blob(chunks, { type: actualMime });
+        const durationSec = recordingDurationRef.current;
         setRecordedBlob(blob);
         setStatus('stopped');
+        onRecordingCompleteRef.current?.(blob, durationSec);
         recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
         recordingStreamsRef.current = [];
         setScreenStream(null);

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import VideoPlayerWorkspace, { type VideoPlayerWorkspaceHandle } from './components/VideoPlayerWorkspace';
 import RecordingMode from './components/RecordingMode';
 import RecordingToolbar from './components/RecordingToolbar';
@@ -6,8 +6,11 @@ import RecordingCompletePage from './components/RecordingCompletePage';
 import VideoEditorPage from './components/VideoEditorPage';
 import { RecordingProvider, useRecording } from './context/RecordingContext';
 
+type CompleteRecording = { blob: Blob; duration: number };
+
 function AppContent() {
   const [mode, setMode] = useState<'analyzer' | 'recording' | 'editor'>('analyzer');
+  const [completeRecording, setCompleteRecording] = useState<CompleteRecording | null>(null);
   const workspaceRef = useRef<VideoPlayerWorkspaceHandle>(null);
   const {
     recording,
@@ -17,7 +20,11 @@ function AppContent() {
     dismissRecording,
   } = useRecording();
   const isRecording = recording.status === 'recording' || recording.status === 'paused';
-  const showCompletePage = recording.status === 'stopped' && recording.blob;
+  const showCompletePage = completeRecording !== null;
+
+  const handleRecordingComplete = useCallback((blob: Blob, duration: number) => {
+    setCompleteRecording({ blob, duration });
+  }, []);
 
   const handleSwitchToRecording = async () => {
     const ok = (await workspaceRef.current?.confirmLeave()) ?? true;
@@ -27,7 +34,17 @@ function AppContent() {
   const handleOpenInAnalyzer = (blob: Blob) => {
     openRecordingInAnalyzer(blob);
     dismissRecording();
+    setCompleteRecording(null);
     setMode('analyzer');
+  };
+
+  const handleCloseCompletePage = () => {
+    setCompleteRecording(null);
+    setMode('recording');
+  };
+
+  const handleOpenInEditor = () => {
+    setMode('editor');
   };
 
   return (
@@ -75,7 +92,12 @@ function AppContent() {
             }
             aria-hidden={isRecording}
           >
-            <RecordingMode key="recording-mode" onBack={() => setMode('analyzer')} hidden={isRecording} />
+            <RecordingMode
+              key="recording-mode"
+              onBack={() => setMode('analyzer')}
+              hidden={isRecording}
+              onRecordingComplete={handleRecordingComplete}
+            />
           </div>
         )}
         {mode === 'analyzer' && (
@@ -102,8 +124,8 @@ function AppContent() {
         )}
         {mode === 'editor' && (
           <VideoEditorPage
-            blob={recording.blob}
-            duration={recording.duration}
+            blob={completeRecording?.blob ?? recording.blob}
+            duration={completeRecording?.duration ?? recording.duration}
             onBack={() => setMode('recording')}
           />
         )}
@@ -111,11 +133,13 @@ function AppContent() {
 
       <RecordingToolbar />
 
-      {showCompletePage && mode !== 'editor' && (
+      {showCompletePage && (
         <RecordingCompletePage
-          onClose={() => setMode('recording')}
+          blob={completeRecording!.blob}
+          duration={completeRecording!.duration}
+          onClose={handleCloseCompletePage}
           onOpenInAnalyzer={handleOpenInAnalyzer}
-          onOpenInEditor={() => setMode('editor')}
+          onOpenInEditor={handleOpenInEditor}
         />
       )}
     </div>

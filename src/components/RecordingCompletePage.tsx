@@ -3,14 +3,21 @@ import { useRecording, formatDuration } from '../context/RecordingContext';
 import { convertWebmToMp4 } from '../utils/convertToMp4';
 
 interface RecordingCompletePageProps {
+  blob: Blob;
+  duration: number;
   onClose: () => void;
   onOpenInAnalyzer?: (blob: Blob) => void;
   onOpenInEditor?: () => void;
 }
 
-export default function RecordingCompletePage({ onClose, onOpenInAnalyzer, onOpenInEditor }: RecordingCompletePageProps) {
-  const { recording, dismissRecording } = useRecording();
-  const { blob, duration } = recording;
+export default function RecordingCompletePage({
+  blob,
+  duration,
+  onClose,
+  onOpenInAnalyzer,
+  onOpenInEditor,
+}: RecordingCompletePageProps) {
+  const { dismissRecording } = useRecording();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState<string | null>(null);
