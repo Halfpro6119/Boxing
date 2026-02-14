@@ -440,35 +440,44 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
       if (audioStream) recordingStreamsRef.current.push(audioStream);
 
       recorder.onstop = () => {
-        if (drawFrameRef.current != null) {
-          cancelAnimationFrame(drawFrameRef.current);
-          drawFrameRef.current = null;
-        }
-        if (durationIntervalRef.current) {
-          clearInterval(durationIntervalRef.current);
-          durationIntervalRef.current = null;
-        }
-        const chunks = chunksRef.current;
-        if (chunks.length === 0) {
-          setError('Recording produced no data. Try recording for at least a few seconds.');
-          setStatus('idle');
+        try {
+          if (drawFrameRef.current != null) {
+            cancelAnimationFrame(drawFrameRef.current);
+            drawFrameRef.current = null;
+          }
+          if (durationIntervalRef.current) {
+            clearInterval(durationIntervalRef.current);
+            durationIntervalRef.current = null;
+          }
           recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
           recordingStreamsRef.current = [];
-          return;
+          setScreenStream(null);
+          setCameraStream(null);
+          setMicStream(null);
+          if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
+          if (screenPreviewRef.current) screenPreviewRef.current.srcObject = null;
+
+          const chunks = chunksRef.current;
+          if (chunks.length === 0) {
+            setError('Recording produced no data. Try recording for at least a few seconds.');
+            setStatus('idle');
+            return;
+          }
+          const actualMime = recorder.mimeType.startsWith('video/webm') ? recorder.mimeType : mimeType;
+          const blob = new Blob(chunks, { type: actualMime });
+          const durationSec = recordingDurationRef.current;
+          setRecordedBlob(blob);
+          setStatus('stopped');
+          // Defer so React state from setRecordedBlob/setStatus is committed before parent state update
+          const notify = onRecordingCompleteRef.current;
+          if (notify) {
+            queueMicrotask(() => notify(blob, durationSec));
+          }
+        } catch (err) {
+          console.error('Recording onstop error:', err);
+          setError(err instanceof Error ? err.message : 'Recording failed to finalize.');
+          setStatus('idle');
         }
-        const actualMime = recorder.mimeType.startsWith('video/webm') ? recorder.mimeType : mimeType;
-        const blob = new Blob(chunks, { type: actualMime });
-        const durationSec = recordingDurationRef.current;
-        setRecordedBlob(blob);
-        setStatus('stopped');
-        onRecordingCompleteRef.current?.(blob, durationSec);
-        recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
-        recordingStreamsRef.current = [];
-        setScreenStream(null);
-        setCameraStream(null);
-        setMicStream(null);
-        if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
-        if (screenPreviewRef.current) screenPreviewRef.current.srcObject = null;
       };
     } catch (err) {
       console.error('Failed to start recording:', err);

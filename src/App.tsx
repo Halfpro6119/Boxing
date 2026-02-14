@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import VideoPlayerWorkspace, { type VideoPlayerWorkspaceHandle } from './components/VideoPlayerWorkspace';
 import RecordingMode from './components/RecordingMode';
 import RecordingToolbar from './components/RecordingToolbar';
@@ -25,6 +25,21 @@ function AppContent() {
   const handleRecordingComplete = useCallback((blob: Blob, duration: number) => {
     setCompleteRecording({ blob, duration });
   }, []);
+
+  // Fallback: show complete page when context has stopped + blob (in case callback didn't run)
+  useEffect(() => {
+    if (
+      recording.status === 'stopped' &&
+      recording.blob &&
+      recording.blob.size > 0 &&
+      completeRecording === null
+    ) {
+      setCompleteRecording({
+        blob: recording.blob,
+        duration: recording.duration,
+      });
+    }
+  }, [recording.status, recording.blob, recording.duration, completeRecording]);
 
   const handleSwitchToRecording = async () => {
     const ok = (await workspaceRef.current?.confirmLeave()) ?? true;
