@@ -154,16 +154,6 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
     setMicStream(null);
   }, [micStream]);
 
-  useEffect(() => {
-    const video = screenPreviewRef.current;
-    if (video && screenStream) {
-      video.srcObject = screenStream;
-      video.play().catch(() => {});
-    } else if (video) {
-      video.srcObject = null;
-    }
-  }, [screenStream]);
-
   const connectScreen = useCallback(async () => {
     setError(null);
     if (!navigator.mediaDevices?.getDisplayMedia) {
@@ -555,7 +545,13 @@ export default function RecordingMode({ onBack, hidden = false }: RecordingModeP
                   {screenStream ? (
                     <div className="space-y-2">
                       <video
-                        ref={screenPreviewRef}
+                        ref={(el) => {
+                          screenPreviewRef.current = el;
+                          if (el && screenStream) {
+                            el.srcObject = screenStream;
+                            el.play().catch(() => {});
+                          }
+                        }}
                         autoPlay
                         muted
                         playsInline
