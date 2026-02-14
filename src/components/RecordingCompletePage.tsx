@@ -1,9 +1,14 @@
-import { useRef, useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { useRecording, formatDuration } from '../context/RecordingContext';
 import { convertWebmToMp4 } from '../utils/convertToMp4';
 
 interface RecordingCompletePageProps {
   onClose: () => void;
+}
+
+function canPlayWebM(): boolean {
+  const v = document.createElement('video');
+  return v.canPlayType('video/webm; codecs="vp8,vp9"') !== '';
 }
 
 export default function RecordingCompletePage({ onClose }: RecordingCompletePageProps) {
@@ -12,6 +17,8 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
   const videoRef = useRef<HTMLVideoElement>(null);
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(true);
 
   const handleClose = () => {
     dismissRecording();
@@ -49,31 +56,66 @@ export default function RecordingCompletePage({ onClose }: RecordingCompletePage
     }
   };
 
+  useEffect(() => {
+    if (!blob) return;
+    let cancelled = false;
+    if (blob.type.includes('webm') && !canPlayWebM()) {
+      setPreviewLoading(true);
+      convertWebmToMp4(blob)
+        .then((mp4Blob) => {
+          if (cancelled) return;
+          const url = URL.createObjectURL(mp4Blob);
+          setPreviewUrl(url);
+          setPreviewLoading(false);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setPreviewUrl(URL.createObjectURL(blob));
+          setPreviewLoading(false);
+        });
+    } else {
+      setPreviewUrl(URL.createObjectURL(blob));
+      setPreviewLoading(false);
+    }
+    return () => {
+      cancelled = true;
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+    };
+  }, [blob]);
+
   if (!blob) return null;
 
-  const videoUrl = useMemo(() => URL.createObjectURL(blob), [blob]);
-
-  useEffect(() => {
-    return () => URL.revokeObjectURL(videoUrl);
-  }, [videoUrl]);
-
   return (
-    <div className="fixed inset-0 z-[10000] bg-slate-950/98 flex flex-col">
+    <div className="fixed inset-0 z-[10000] bg-slate-950/98 flex flex-col overflow-auto">
       <div className="flex-1 flex flex-col items-center justify-center p-8 min-h-0">
         <h2 className="text-2xl font-display tracking-wider text-white mb-2">
           Recording Complete
         </h2>
         <p className="text-slate-400 mb-6">Duration: {formatDuration(duration)}</p>
 
-        <div className="w-full max-w-4xl aspect-video bg-black rounded-xl overflow-hidden border border-slate-600 mb-6">
-          <video
-            ref={videoRef}
-            src={videoUrl}
-            controls
-            autoPlay
-            playsInline
-            className="w-full h-full object-contain"
-          />
+        <div className="w-full max-w-4xl min-h-[300px] aspect-video bg-black rounded-xl overflow-hidden border border-slate-600 mb-6 flex-shrink-0">
+          {previewLoading ? (
+            <div className="w-full h-full flex items-center justify-center text-slate-400">
+              Preparing preview...
+            </div>
+          ) : previewUrl ? (
+            <video
+              ref={videoRef}
+              src={previewUrl}
+              controls
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-contain"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-slate-400">
+              No preview available
+            </div>
+          )}
         </div>
 
         {convertError && (
