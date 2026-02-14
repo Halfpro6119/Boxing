@@ -181,6 +181,13 @@ export default function RecordingCompletePage({ onClose, onOpenInAnalyzer, onOpe
         <div className="flex flex-wrap gap-3 justify-center">
           <button
             type="button"
+            onClick={handleOpenInEditor}
+            className="px-6 py-3 rounded-lg bg-emerald-600 text-white font-medium hover:bg-emerald-500 transition-colors"
+          >
+            Open in Video Editor
+          </button>
+          <button
+            type="button"
             onClick={() => handleDownload(false)}
             disabled={converting}
             className="px-6 py-3 rounded-lg bg-accent text-slate-900 font-medium hover:bg-orange-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -204,15 +211,6 @@ export default function RecordingCompletePage({ onClose, onOpenInAnalyzer, onOpe
               className="px-6 py-3 rounded-lg bg-ring text-white font-medium hover:bg-red-600 transition-colors"
             >
               Open in Video Analyzer
-            </button>
-          )}
-          {onOpenInEditor && (
-            <button
-              type="button"
-              onClick={handleOpenInEditor}
-              className="px-6 py-3 rounded-lg bg-emerald-600 text-white font-medium hover:bg-emerald-500 transition-colors"
-            >
-              Open in Video Editor
             </button>
           )}
           <button
