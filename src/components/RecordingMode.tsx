@@ -359,6 +359,15 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         const micSource = audioCtx.createMediaStreamSource(audioStream);
         micSource.connect(dest);
       }
+      // Some browsers produce no data with video-only streams; ensure we always have an audio track.
+      if (dest.stream.getAudioTracks().length === 0) {
+        const osc = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        gainNode.gain.value = 0;
+        osc.connect(gainNode);
+        gainNode.connect(dest);
+        osc.start();
+      }
 
       const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
       const hasAudio = dest.stream.getAudioTracks().length > 0;
@@ -414,9 +423,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         }
       };
 
-      const canvasStream = canvas.captureStream(30);
+      // Use the display stream's video track directly for recording. Canvas captureStream() often
+      // produces no data in many browsers; the display track is a real capture and reliably emits.
       const combinedStream = new MediaStream([
-        ...canvasStream.getVideoTracks(),
+        displayStream.getVideoTracks()[0],
         ...dest.stream.getAudioTracks(),
       ]);
       const result = createRecorder(combinedStream);
@@ -435,8 +445,9 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
       };
 
       mediaRecorderRef.current = recorder;
-      // Short timeslice (100ms) so first chunk arrives quickly and we get regular data.
-      recorder.start(100);
+      // No timeslice: browser delivers all data in ondataavailable when we call stop() (and requestData()).
+      // This is more reliable than timeslice in many browsers where canvas/stream encoding failed to emit.
+      recorder.start();
       setRecordingDuration(0);
       setStatus('recording');
       drawFrame();
@@ -444,18 +455,6 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
       durationIntervalRef.current = setInterval(() => {
         setRecordingDuration((d) => d + 1);
       }, 1000);
-
-      // Force the browser to emit chunks periodically (some browsers don't respect timeslice reliably).
-      requestDataIntervalRef.current = setInterval(() => {
-        const rec = mediaRecorderRef.current;
-        if (rec?.state === 'recording') {
-          try {
-            rec.requestData();
-          } catch {
-            /* ignore */
-          }
-        }
-      }, 500);
 
       recordingStreamsRef.current = [displayStream];
       if (camStream) recordingStreamsRef.current.push(camStream);
@@ -507,9 +506,8 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
           }
         };
 
-        // Defer so the final ondataavailable (from requestData/stop) is delivered first.
-        // Some browsers emit the last chunk asynchronously after onstop is queued.
-        setTimeout(processChunks, 400);
+        // No timeslice: all data is delivered in ondataavailable when stop() runs. Wait for it.
+        setTimeout(processChunks, 500);
       };
     } catch (err) {
       console.error('Failed to start recording:', err);
@@ -676,7 +674,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
               Live preview – You are recording
             </h3>
             <p className="text-slate-400 text-sm mb-3">
-              This is exactly what is being saved. Use the floating toolbar to pause or end.
+              Screen and audio are being saved. Face camera is preview only. Use the floating toolbar to pause or end.
             </p>
             <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-slate-600">
               <canvas
