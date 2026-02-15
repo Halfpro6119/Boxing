@@ -42,6 +42,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
   const screenPreviewRef = useRef<HTMLVideoElement>(null);
   const recordingStreamsRef = useRef<MediaStream[]>([]);
   const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const requestDataIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const drawFrameRef = useRef<number | null>(null);
   const recordingStartTimeRef = useRef<number>(0);
   const totalPausedMsRef = useRef<number>(0);
@@ -145,6 +146,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
       if (durationIntervalRef.current) {
         clearInterval(durationIntervalRef.current);
         durationIntervalRef.current = null;
+      }
+      if (requestDataIntervalRef.current) {
+        clearInterval(requestDataIntervalRef.current);
+        requestDataIntervalRef.current = null;
       }
       if (drawFrameRef.current != null) {
         cancelAnimationFrame(drawFrameRef.current);
@@ -353,6 +358,12 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         return;
       }
       const screenTrack = videoTracks[0];
+      if (screenTrack.readyState !== 'live' || !screenTrack.enabled) {
+        setError('Screen track is not active. Cancel and choose a different window or screen to share.');
+        setStatus('idle');
+        stopAllStreams();
+        return;
+      }
       const { width, height } = screenTrack.getSettings();
       canvas.width = width || 1920;
       canvas.height = height || 1080;
@@ -484,6 +495,18 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
       setStatus('recording');
       drawFrame();
 
+      // Force Chrome (and others) to push data: requestData() every 1.5s. Some Chrome setups
+      // don't reliably fire ondataavailable on timeslice alone.
+      requestDataIntervalRef.current = setInterval(() => {
+        try {
+          if (mediaRecorderRef.current?.state === 'recording') {
+            mediaRecorderRef.current.requestData();
+          }
+        } catch {
+          /* requestData not supported or recorder stopped */
+        }
+      }, 1500);
+
       const getElapsedSec = () =>
         Math.floor(
           (performance.now() - recordingStartTimeRef.current - totalPausedMsRef.current) / 1000
@@ -502,6 +525,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         if (durationIntervalRef.current) {
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
+        }
+        if (requestDataIntervalRef.current) {
+          clearInterval(requestDataIntervalRef.current);
+          requestDataIntervalRef.current = null;
         }
         recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
         recordingStreamsRef.current = [];
@@ -524,7 +551,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
                 return;
               }
               setError(
-                'Recording produced no data. Use Chrome or Edge, share your screen again, and record for at least a few seconds.'
+                'Recording produced no data. Share a normal app window or your entire screen (not a browser tab with protected content), record for at least 5 seconds, then stop. If it persists, try a different browser or use HTTPS.'
               );
               setStatus('idle');
               return;
@@ -605,6 +632,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
         }
+        if (requestDataIntervalRef.current) {
+          clearInterval(requestDataIntervalRef.current);
+          requestDataIntervalRef.current = null;
+        }
         setStatus('paused');
       } catch (err) {
         console.error('Failed to pause:', err);
@@ -626,6 +657,15 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
             (performance.now() - recordingStartTimeRef.current - totalPausedMsRef.current) / 1000
           );
         durationIntervalRef.current = setInterval(() => setRecordingDuration(getElapsedSec()), 200);
+        requestDataIntervalRef.current = setInterval(() => {
+          try {
+            if (mediaRecorderRef.current?.state === 'recording') {
+              mediaRecorderRef.current.requestData();
+            }
+          } catch {
+            /* ignore */
+          }
+        }, 1500);
       } catch (err) {
         console.error('Failed to resume:', err);
         setError(err instanceof Error ? err.message : 'Resume not supported in this browser');
