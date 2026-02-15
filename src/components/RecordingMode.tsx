@@ -42,6 +42,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
   const screenPreviewRef = useRef<HTMLVideoElement>(null);
   const recordingStreamsRef = useRef<MediaStream[]>([]);
   const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const requestDataIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const drawFrameRef = useRef<number | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
@@ -127,6 +128,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
       if (durationIntervalRef.current) {
         clearInterval(durationIntervalRef.current);
         durationIntervalRef.current = null;
+      }
+      if (requestDataIntervalRef.current) {
+        clearInterval(requestDataIntervalRef.current);
+        requestDataIntervalRef.current = null;
       }
       if (drawFrameRef.current != null) {
         cancelAnimationFrame(drawFrameRef.current);
@@ -355,8 +360,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         micSource.connect(dest);
       }
 
-      // Only vp9/vp8 produce valid WebM - 'video/webm' and avc1 produce Matroska which Chrome can't play
-      const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8'];
+      const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
       const hasAudio = dest.stream.getAudioTracks().length > 0;
       const createRecorder = (stream: MediaStream): { recorder: MediaRecorder; mimeType: string } => {
         for (const mime of mimeTypes) {
@@ -364,7 +368,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
             try {
               const rec = new MediaRecorder(stream, {
                 mimeType: mime,
-                videoBitsPerSecond: 5000000,
+                videoBitsPerSecond: 2500000,
                 ...(hasAudio && { audioBitsPerSecond: 128000 }),
               });
               return { recorder: rec, mimeType: mime };
@@ -431,8 +435,8 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
       };
 
       mediaRecorderRef.current = recorder;
-      // Use a timeslice so browsers emit data periodically. 250ms gives the encoder time to produce keyframes.
-      recorder.start(250);
+      // Short timeslice (100ms) so first chunk arrives quickly and we get regular data.
+      recorder.start(100);
       setRecordingDuration(0);
       setStatus('recording');
       drawFrame();
@@ -440,6 +444,18 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
       durationIntervalRef.current = setInterval(() => {
         setRecordingDuration((d) => d + 1);
       }, 1000);
+
+      // Force the browser to emit chunks periodically (some browsers don't respect timeslice reliably).
+      requestDataIntervalRef.current = setInterval(() => {
+        const rec = mediaRecorderRef.current;
+        if (rec?.state === 'recording') {
+          try {
+            rec.requestData();
+          } catch {
+            /* ignore */
+          }
+        }
+      }, 500);
 
       recordingStreamsRef.current = [displayStream];
       if (camStream) recordingStreamsRef.current.push(camStream);
@@ -454,6 +470,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
         }
+        if (requestDataIntervalRef.current) {
+          clearInterval(requestDataIntervalRef.current);
+          requestDataIntervalRef.current = null;
+        }
         recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
         recordingStreamsRef.current = [];
         setScreenStream(null);
@@ -464,7 +484,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
 
         const durationSec = recordingDurationRef.current;
         const processChunks = () => {
-          const chunks = chunksRef.current;
+          const chunks = [...chunksRef.current];
           try {
             if (chunks.length === 0) {
               setError('Recording produced no data. Try recording for at least a few seconds.');
@@ -489,7 +509,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
 
         // Defer so the final ondataavailable (from requestData/stop) is delivered first.
         // Some browsers emit the last chunk asynchronously after onstop is queued.
-        setTimeout(processChunks, 150);
+        setTimeout(processChunks, 400);
       };
     } catch (err) {
       console.error('Failed to start recording:', err);
