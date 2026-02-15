@@ -608,19 +608,13 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
     !!navigator.mediaDevices?.getDisplayMedia &&
     typeof MediaRecorder !== 'undefined';
 
-  // Always render the same canvas so it never unmounts during recording (avoid black/frozen output).
-  // During recording, avoid display:none so the canvas stays paintable for captureStream (browser quirks).
+  // Canvas is always in DOM for recording; shown in "Live preview" when recording so user sees exactly what is recorded.
   const isActivelyRecording = status === 'recording' || status === 'paused' || status === 'connecting';
   return (
     <div
       className={hidden ? 'sr-only min-h-0 overflow-hidden pointer-events-none' : 'min-h-screen p-6'}
       aria-hidden={hidden}
     >
-      <canvas
-        ref={canvasRef}
-        className={isActivelyRecording ? 'absolute opacity-0 w-px h-px overflow-hidden pointer-events-none -z-10' : 'hidden'}
-        aria-hidden
-      />
       {!hidden && (
       <div className="max-w-4xl mx-auto">
         <div className="flex justify-between items-center mb-6">
@@ -653,6 +647,37 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
             {error}
           </div>
         )}
+
+        {/* Live preview: exactly what is being recorded. Canvas stays in DOM when hidden so ref is valid. */}
+        <div className={isActivelyRecording ? 'mb-6' : 'hidden'}>
+          <div className="rounded-xl border-2 border-red-500/50 bg-slate-900/80 p-4">
+            <h3 className="text-lg font-medium text-white mb-2 flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse ring-2 ring-red-400/50" />
+              Live preview – You are recording
+            </h3>
+            <p className="text-slate-400 text-sm mb-3">
+              This is exactly what is being saved. Use the floating toolbar to pause or end.
+            </p>
+            <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-slate-600">
+              <canvas
+                ref={canvasRef}
+                className="w-full h-full"
+                style={{ objectFit: 'contain' }}
+                aria-hidden
+              />
+              {status === 'connecting' && (
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80">
+                  <p className="text-slate-300 text-lg">Connecting...</p>
+                </div>
+              )}
+            </div>
+            {(status === 'recording' || status === 'paused') && (
+              <p className="text-slate-500 text-sm mt-2 font-mono">
+                {formatDuration(recordingDuration)}
+              </p>
+            )}
+          </div>
+        </div>
 
         {status === 'idle' && (
           <div className="space-y-6 mb-6">
@@ -901,32 +926,6 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
           </div>
         )}
 
-        {(status === 'connecting' || status === 'recording' || status === 'paused') && !hidden && (
-          <div className="space-y-4 mb-6">
-            <div className="rounded-xl border border-slate-600/50 bg-slate-800/30 p-4">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`w-3 h-3 rounded-full ${
-                    status === 'paused' ? 'bg-amber-500' : 'bg-red-500 animate-pulse'
-                  }`}
-                />
-                <span className="text-white">
-                  {status === 'connecting'
-                    ? 'Connecting...'
-                    : status === 'paused'
-                      ? 'Paused'
-                      : 'Recording'}
-                </span>
-                <span className="text-slate-400 font-mono ml-2">
-                  {formatDuration(recordingDuration)}
-                </span>
-              </div>
-              <p className="text-slate-500 text-sm mt-1">
-                Use the floating toolbar to pause or end. You can switch tabs while recording.
-              </p>
-            </div>
-          </div>
-        )}
       </div>
       )}
     </div>

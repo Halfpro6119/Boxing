@@ -98,19 +98,10 @@ function AppContent() {
 
       <main className="flex-1 min-h-0 relative">
         {(mode === 'recording' || isRecording) && (
-          <div
-            key="recording-container"
-            className={
-              isRecording
-                ? 'absolute inset-0 w-px h-px overflow-hidden opacity-0 pointer-events-none -z-10'
-                : 'min-h-full'
-            }
-            aria-hidden={isRecording}
-          >
+          <div key="recording-container" className="min-h-full">
             <RecordingMode
               key="recording-mode"
               onBack={() => setMode('analyzer')}
-              hidden={isRecording}
               onRecordingComplete={handleRecordingComplete}
             />
           </div>
@@ -121,21 +112,6 @@ function AppContent() {
             initialRecordingBlob={openInAnalyzerBlob}
             onRecordingConsumed={clearOpenInAnalyzer}
           />
-        )}
-        {mode === 'recording' && isRecording && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
-            <p className="text-slate-400 mb-2">Recording in progress</p>
-            <p className="text-slate-500 text-sm mb-4">
-              Use the floating toolbar to pause or end.
-            </p>
-            <button
-              type="button"
-              onClick={() => setMode('analyzer')}
-              className="px-4 py-2 rounded-lg bg-slate-700 text-slate-300 hover:bg-slate-600"
-            >
-              Switch to Video Analyzer
-            </button>
-          </div>
         )}
         {mode === 'editor' && (
           <VideoEditorPage
