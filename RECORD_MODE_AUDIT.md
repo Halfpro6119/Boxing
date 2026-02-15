@@ -2,13 +2,20 @@
 
 **Date:** February 15, 2025  
 **Scope:** Recording mode feature in Boxing Video Analyzer  
-**Status:** All issues listed below have been **FIXED** as of the latest implementation.
+**Status:** All issues listed below have been **FIXED** as of the latest implementation.  
+**Update (Feb 15, 2025):** Root cause of “5-byte WebM” fix documented below (Issue 15).
 
 ---
 
 ## Executive Summary
 
 Recording mode implements screen capture with optional face camera overlay and microphone. This audit identified several issues that have now been fully addressed, including the critical face camera recording feature, confirmation dialogs when leaving during recording, and improved error handling.
+
+### Critical fix: Recording always ~5 bytes (Issue 15)
+
+**Symptom:** No matter how long you record, the saved WebM file is always the same tiny size (~5 bytes).  
+**Root cause:** `MediaRecorder.start()` was called **without a timeslice**. The code relied on the browser delivering all data in a single `ondataavailable` event when `stop()` is called. In many browsers (notably Chrome on Windows), that final event often contains only a minimal blob (e.g. the WebM EBML header, ~5 bytes), so the recording never grows.  
+**Fix:** Call `recorder.start(1000)` so the browser fires `ondataavailable` every 1 second with real chunks. Chunks are appended to `chunksRef`; on `stop()` the final chunk is also delivered and the full blob is built from all chunks. A guard was also added: if the final blob is &lt; 100 bytes, show a clear error instead of saving a broken file.
 
 ---
 
@@ -36,7 +43,20 @@ The comment on lines 368–369 explains the choice: "Canvas captureStream() ofte
 
 ---
 
-### 2. No confirmation when leaving during active recording
+### 2. Recording always ~5 bytes (same WebM regardless of duration) — FIXED
+
+**Location:** `RecordingMode.tsx` – `recorder.start()` and `ondataavailable` / `onstop`  
+**Severity:** Critical
+
+**Problem:** No matter how long the user records, the saved WebM file is always the same tiny size (e.g. 5 bytes). The file does not grow with recording duration.
+
+**Root cause:** `MediaRecorder.start()` was called with no argument. The code assumed the browser would deliver all recorded data in one `ondataavailable` event when `stop()` is called. In practice, many browsers (especially Chrome on Windows) only deliver a minimal blob at that time—often just the WebM container header (~5 bytes). No periodic chunks were requested, so nothing else was ever pushed to `chunksRef`.
+
+**Fix:** Call `recorder.start(1000)` (timeslice 1 second). The browser then fires `ondataavailable` every second with real data; when `stop()` is called, the final chunk is also delivered. All chunks are combined into the final blob. A guard was added: if the combined blob size is &lt; 100 bytes, show an error instead of saving.
+
+---
+
+### 3. No confirmation when leaving during active recording
 
 **Location:** `App.tsx`; `RecordingMode.tsx` (onBack)  
 **Severity:** High
@@ -51,7 +71,7 @@ there is no confirmation. Mode switches immediately. Recording mode unmounts (or
 
 ---
 
-### 3. Unsafe `navigator.mediaDevices` usage
+### 4. Unsafe `navigator.mediaDevices` usage
 
 **Location:** `RecordingMode.tsx` line 60  
 **Severity:** Medium
@@ -64,7 +84,7 @@ The devicechange listener (lines 91–92) uses optional chaining (`?.`), but `en
 
 ## High-Priority Issues
 
-### 4. Camera fallback ignores selected device
+### 5. Camera fallback ignores selected device
 
 **Location:** `RecordingMode.tsx` lines 278–286  
 **Severity:** Medium
@@ -73,7 +93,7 @@ The devicechange listener (lines 91–92) uses optional chaining (`?.`), but `en
 
 ---
 
-### 5. Stale duration in `onstop` callback
+### 6. Stale duration in `onstop` callback
 
 **Location:** `RecordingMode.tsx` lines 368–370, 414–416  
 **Severity:** Low–Medium
@@ -82,7 +102,7 @@ The devicechange listener (lines 91–92) uses optional chaining (`?.`), but `en
 
 ---
 
-### 6. Confusing layout when "Back to Analyzer" during recording
+### 7. Confusing layout when "Back to Analyzer" during recording
 
 **Location:** `App.tsx` lines 99–115  
 **Severity:** Medium (UX)
@@ -91,7 +111,7 @@ The devicechange listener (lines 91–92) uses optional chaining (`?.`), but `en
 
 ---
 
-### 7. Dead code: `requestDataIntervalRef` never set
+### 8. Dead code: `requestDataIntervalRef` never set
 
 **Location:** `RecordingMode.tsx`  
 **Severity:** Low
@@ -100,7 +120,7 @@ The devicechange listener (lines 91–92) uses optional chaining (`?.`), but `en
 
 ---
 
-### 8. Safari / WebM compatibility
+### 9. Safari / WebM compatibility
 
 **Location:** `RecordingCompletePage.tsx` lines 104–111; `RecordingMode.tsx`  
 **Severity:** Medium (platform-specific)
@@ -111,7 +131,7 @@ The devicechange listener (lines 91–92) uses optional chaining (`?.`), but `en
 
 ## Medium-Priority Issues
 
-### 9. Error handling could be more specific
+### 10. Error handling could be more specific
 
 **Location:** `RecordingMode.tsx`  
 **Severity:** Low
@@ -120,7 +140,7 @@ The devicechange listener (lines 91–92) uses optional chaining (`?.`), but `en
 
 ---
 
-### 10. Recording toolbar visibility vs. mode
+### 11. Recording toolbar visibility vs. mode
 
 **Location:** `RecordingToolbar.tsx`  
 **Severity:** Low
@@ -129,7 +149,7 @@ The devicechange listener (lines 91–92) uses optional chaining (`?.`), but `en
 
 ---
 
-### 11. Video Editor receives null blob when opened from header
+### 12. Video Editor receives null blob when opened from header
 
 **Location:** `App.tsx` line 116  
 **Severity:** Medium
@@ -140,7 +160,7 @@ The devicechange listener (lines 91–92) uses optional chaining (`?.`), but `en
 
 ## Lower-Priority / Edge Cases
 
-### 12. `enumerateDevices` dependency on `selectedCameraId` / `selectedMicId`
+### 13. `enumerateDevices` dependency on `selectedCameraId` / `selectedMicId`
 
 **Location:** `RecordingMode.tsx` lines 71–77, 82  
 **Severity:** Low
@@ -149,7 +169,7 @@ The devicechange listener (lines 91–92) uses optional chaining (`?.`), but `en
 
 ---
 
-### 13. No loading state for FFmpeg in download flow
+### 14. No loading state for FFmpeg in download flow
 
 **Location:** `RecordingCompletePage.tsx`; `convertToMp4.ts`  
 **Severity:** Low
@@ -158,7 +178,7 @@ The devicechange listener (lines 91–92) uses optional chaining (`?.`), but `en
 
 ---
 
-### 14. Canvas not used for recording
+### 15. Canvas not used for recording
 
 **Location:** `RecordingMode.tsx`  
 **Severity:** Informational
@@ -172,19 +192,20 @@ The devicechange listener (lines 91–92) uses optional chaining (`?.`), but `en
 | # | Issue | Severity | Status |
 |---|-------|----------|--------|
 | 1 | Face camera not in recording | Critical | **FIXED** – canvas.captureStream() used when face enabled |
-| 2 | No confirm when leaving during recording | High | **FIXED** – confirmation dialog added |
-| 3 | Unsafe `navigator.mediaDevices` access | Medium | **FIXED** – guards added throughout |
-| 4 | Camera fallback ignores selected device | Medium | **FIXED** – selectedCameraId used in fallback |
-| 5 | Stale duration in onstop | Low–Medium | **FIXED** – performance.now() + pause tracking |
-| 6 | Both Recording + Analyzer visible | Medium | **FIXED** – VideoPlayerWorkspace hidden when recording |
-| 7 | Dead `requestDataIntervalRef` | Low | **FIXED** – removed |
-| 8 | Safari/WebM issues | Medium | Improved – FFmpeg preload, MP4 download recommended |
-| 9 | Generic error messages | Low | **FIXED** – actual errors surfaced |
-| 10 | Toolbar vs. mode behavior | Low | Working as intended |
-| 11 | Editor blob source logic | Medium | Handled – fallback chain works |
-| 12 | enumerateDevices dependencies | Low | **FIXED** – refs for initial selection |
-| 13 | FFmpeg loading feedback | Low | **FIXED** – preload on mount, "Preparing download..." |
-| 14 | Canvas unused for recording | Info | **RESOLVED** – canvas now used for face overlay |
+| 2 | Recording always ~5 bytes (same file regardless of duration) | Critical | **FIXED** – use `recorder.start(1000)` timeslice + small-blob guard |
+| 3 | No confirm when leaving during recording | High | **FIXED** – confirmation dialog added |
+| 4 | Unsafe `navigator.mediaDevices` access | Medium | **FIXED** – guards added throughout |
+| 5 | Camera fallback ignores selected device | Medium | **FIXED** – selectedCameraId used in fallback |
+| 6 | Stale duration in onstop | Low–Medium | **FIXED** – performance.now() + pause tracking |
+| 7 | Both Recording + Analyzer visible | Medium | **FIXED** – VideoPlayerWorkspace hidden when recording |
+| 8 | Dead `requestDataIntervalRef` | Low | **FIXED** – removed |
+| 9 | Safari/WebM issues | Medium | Improved – FFmpeg preload, MP4 download recommended |
+| 10 | Generic error messages | Low | **FIXED** – actual errors surfaced |
+| 11 | Toolbar vs. mode behavior | Low | Working as intended |
+| 12 | Editor blob source logic | Medium | Handled – fallback chain works |
+| 13 | enumerateDevices dependencies | Low | **FIXED** – refs for initial selection |
+| 14 | FFmpeg loading feedback | Low | **FIXED** – preload on mount, "Preparing download..." |
+| 15 | Canvas unused for recording | Info | **RESOLVED** – canvas now used for face overlay |
 
 ---
 
@@ -197,3 +218,4 @@ The devicechange listener (lines 91–92) uses optional chaining (`?.`), but `en
 5. **Duration accuracy:** Use a monotonic timer (e.g. `performance.now()`) for duration instead of counting interval ticks.
 6. **Layout when switching during recording:** Either block "Back to Analyzer" while recording, or make the recording view exclusive (e.g., overlay) instead of stacking with the analyzer.
 7. **README:** Update to match current behavior (e.g., face camera is preview-only until recording includes it).
+8. **5-byte WebM:** Use `MediaRecorder.start(timeslice)` (e.g. 1000 ms) so `ondataavailable` fires periodically; without it, many browsers deliver only a minimal blob at `stop()`. **Done** – implemented in RecordingMode.tsx.

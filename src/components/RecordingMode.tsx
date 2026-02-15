@@ -487,7 +487,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
       };
 
       mediaRecorderRef.current = recorder;
-      recorder.start();
+      // Use timeslice so the browser fires ondataavailable periodically (every 1s). Without it,
+      // many browsers (e.g. Chrome on Windows) deliver only a minimal blob (~5 bytes) at stop().
+      const TIMESLICE_MS = 1000;
+      recorder.start(TIMESLICE_MS);
       recordingStartTimeRef.current = performance.now();
       setRecordingDuration(0);
       setStatus('recording');
@@ -533,6 +536,13 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
             }
             const actualMime = recorder.mimeType.startsWith('video/webm') ? recorder.mimeType : mimeType;
             const blob = new Blob(chunks, { type: actualMime });
+            if (blob.size < 100) {
+              setError(
+                `Recording produced almost no data (${blob.size} bytes). Try Chrome or Edge, or disable the face camera overlay and record again.`
+              );
+              setStatus('idle');
+              return;
+            }
             setRecordedBlob(blob);
             setStatus('stopped');
             setRecording({ status: 'stopped', duration: durationSec, blob });
