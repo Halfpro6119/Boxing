@@ -507,7 +507,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         };
 
         // No timeslice: all data is delivered in ondataavailable when stop() runs. Wait for it.
-        setTimeout(processChunks, 500);
+        setTimeout(processChunks, 800);
       };
     } catch (err) {
       console.error('Failed to start recording:', err);

@@ -16,7 +16,6 @@ async function getFFmpeg(): Promise<FFmpeg> {
 }
 
 const sharedArgs = ['-avoid_negative_ts', 'make_zero', '-fflags', '+genpts'];
-const MIN_BLOB_SIZE = 256;
 
 async function ensureCleanFs(ffmpeg: FFmpeg): Promise<void> {
   try {
@@ -36,7 +35,6 @@ export async function convertWebmToMp4(blob: Blob): Promise<Blob> {
   await ensureCleanFs(ffmpeg);
   const data = new Uint8Array(await blob.arrayBuffer());
   if (data.length === 0) throw new Error('Recording is empty');
-  if (data.length < MIN_BLOB_SIZE) throw new Error('Recording is too short to convert');
   await ffmpeg.writeFile('input.webm', data);
   const presets = [
     [...sharedArgs, '-i', 'input.webm', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-c:a', 'aac', '-movflags', '+faststart', 'output.mp4'],

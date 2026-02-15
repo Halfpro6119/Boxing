@@ -80,14 +80,10 @@ export default function RecordingCompletePage({
   };
 
   useEffect(() => {
-    if (!blob || blob.size < 256) {
+    if (!blob || blob.size === 0) {
       setPreviewLoading(false);
       setPreviewUrl(null);
-      setVideoError(
-        !blob || blob.size === 0
-          ? 'Recording produced no data.'
-          : 'Recording is too short to preview.'
-      );
+      setVideoError('Recording produced no data.');
       return;
     }
     blobRef.current = blob;

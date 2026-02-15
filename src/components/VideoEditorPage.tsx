@@ -16,9 +16,9 @@ export default function VideoEditorPage({ blob, duration, onBack }: VideoEditorP
   const [videoDuration, setVideoDuration] = useState(0);
 
   useEffect(() => {
-    if (!blob || blob.size < 256) {
+    if (!blob || blob.size === 0) {
       setPreviewUrl(null);
-      setError(!blob || blob.size === 0 ? 'No recording to play.' : 'Recording is too short.');
+      setError('No recording to play.');
       return;
     }
     setError(null);
