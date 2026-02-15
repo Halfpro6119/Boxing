@@ -449,22 +449,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         }
       };
 
-      // When face camera is enabled, use canvas.captureStream() to record the composed view
-      // (screen + face overlay). Fall back to display-only if canvas capture fails.
-      let videoTrack: MediaStreamTrack;
-      const useCanvasForFace = camStream && typeof canvas.captureStream === 'function';
-      if (useCanvasForFace) {
-        try {
-          const canvasStream = canvas.captureStream(30);
-          videoTrack = canvasStream.getVideoTracks()[0];
-          if (!videoTrack) throw new Error('Canvas capture produced no video track');
-        } catch (canvasErr) {
-          console.warn('Canvas captureStream failed, using display-only:', canvasErr);
-          videoTrack = displayStream.getVideoTracks()[0];
-        }
-      } else {
-        videoTrack = displayStream.getVideoTracks()[0];
-      }
+      // Record from the display stream only. In many browsers (Chrome on macOS, Safari, etc.)
+      // canvas.captureStream() produces no data for MediaRecorder, so using it causes "recording
+      // produced no data". The canvas is still used for the live preview (user sees screen + face).
+      const videoTrack = displayStream.getVideoTracks()[0];
 
       const combinedStream = new MediaStream([
         videoTrack,
@@ -526,11 +514,18 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         const durationSec = Math.floor(
           (performance.now() - recordingStartTimeRef.current - totalPausedMsRef.current) / 1000
         );
-        const processChunks = () => {
+        const processChunks = (retried = false) => {
           const chunks = [...chunksRef.current];
           try {
             if (chunks.length === 0) {
-              setError('Recording produced no data. Try recording for at least a few seconds.');
+              if (!retried) {
+                // Final chunk can arrive late; wait a bit and try once more.
+                setTimeout(() => processChunks(true), 600);
+                return;
+              }
+              setError(
+                'Recording produced no data. Use Chrome or Edge, share your screen again, and record for at least a few seconds.'
+              );
               setStatus('idle');
               return;
             }
@@ -557,8 +552,8 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
           }
         };
 
-        // No timeslice: all data is delivered in ondataavailable when stop() runs. Wait for it.
-        setTimeout(processChunks, 800);
+        // Give the browser time to deliver the final ondataavailable after stop().
+        setTimeout(() => processChunks(false), 1000);
       };
     } catch (err) {
       console.error('Failed to start recording:', err);
@@ -730,7 +725,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
               Live preview – You are recording
             </h3>
             <p className="text-slate-400 text-sm mb-3">
-              Screen, face camera, and audio are being saved. Use the floating toolbar to pause or end.
+              Screen and audio are being saved. Face bubble is preview only. Use the floating toolbar to pause or end.
             </p>
             <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-slate-600">
               <canvas
