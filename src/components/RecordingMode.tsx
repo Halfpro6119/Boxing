@@ -1,4 +1,14 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import {
+  Output as MediabunnyOutput,
+  CanvasSource,
+  MediaStreamAudioTrackSource,
+  WebMOutputFormat,
+  BufferTarget,
+  canEncodeVideo,
+  canEncodeAudio,
+  QUALITY_HIGH,
+} from 'mediabunny';
 import { useRecording } from '../context/RecordingContext';
 
 interface MediaDeviceInfo {
@@ -60,6 +70,15 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
 
   const hasSetInitialCameraRef = useRef(false);
   const hasSetInitialMicRef = useRef(false);
+
+  // WebCodecs/Mediabunny path refs (frame-by-frame capture, includes face overlay)
+  const mediabunnyOutputRef = useRef<MediabunnyOutput | null>(null);
+  const mediabunnyVideoSourceRef = useRef<CanvasSource | null>(null);
+  const mediabunnyAudioSourceRef = useRef<MediaStreamAudioTrackSource | null>(null);
+  const frameCaptureIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastFrameNumberRef = useRef(-1);
+  const useWebCodecsRef = useRef(false);
+  const stopRecordingRef = useRef<() => void>(() => {});
 
   const enumerateDevices = useCallback(async () => {
     if (!navigator.mediaDevices) {
@@ -151,6 +170,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         clearInterval(requestDataIntervalRef.current);
         requestDataIntervalRef.current = null;
       }
+      if (frameCaptureIntervalRef.current) {
+        clearInterval(frameCaptureIntervalRef.current);
+        frameCaptureIntervalRef.current = null;
+      }
       if (drawFrameRef.current != null) {
         cancelAnimationFrame(drawFrameRef.current);
         drawFrameRef.current = null;
@@ -162,6 +185,11 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         } catch {
           /* ignore */
         }
+      }
+      const mbOutput = mediabunnyOutputRef.current;
+      if (mbOutput && mbOutput.state !== 'canceled' && mbOutput.state !== 'finalized') {
+        void mbOutput.cancel();
+        mediabunnyOutputRef.current = null;
       }
     };
   }, []);
@@ -297,9 +325,11 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         return;
       }
       displayStream.getVideoTracks()[0].onended = () => {
-        const rec = mediaRecorderRef.current;
-        if (rec?.state === 'recording' || rec?.state === 'paused') {
-          rec.stop();
+        if (useWebCodecsRef.current && mediabunnyOutputRef.current?.state === 'started') {
+          stopRecordingRef.current();
+        } else {
+          const rec = mediaRecorderRef.current;
+          if (rec?.state === 'recording' || rec?.state === 'paused') rec.stop();
         }
       };
 
@@ -406,30 +436,21 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         osc.start();
       }
 
-      const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
       const hasAudio = dest.stream.getAudioTracks().length > 0;
-      const createRecorder = (stream: MediaStream): { recorder: MediaRecorder; mimeType: string } => {
-        for (const mime of mimeTypes) {
-          if (MediaRecorder.isTypeSupported(mime)) {
-            try {
-              const rec = new MediaRecorder(stream, {
-                mimeType: mime,
-                videoBitsPerSecond: 2500000,
-                ...(hasAudio && { audioBitsPerSecond: 128000 }),
-              });
-              return { recorder: rec, mimeType: mime };
-            } catch {
-              continue;
-            }
-          }
-        }
-        try {
-          const rec = new MediaRecorder(stream);
-          return { recorder: rec, mimeType: rec.mimeType || 'video/webm;codecs=vp9' };
-        } catch (e) {
-          throw new Error('Recording not supported in this browser. Try Chrome or Edge.');
-        }
-      };
+      const FRAME_RATE = 30;
+
+      // Prefer WebCodecs/Mediabunny: frame-by-frame capture from canvas (includes face overlay)
+      let webCodecsOk = false;
+      try {
+        const [vp9Ok, opusOk] = await Promise.all([
+          canEncodeVideo('vp9', { width: canvas.width, height: canvas.height, bitrate: 2500000 }),
+          hasAudio ? canEncodeAudio('opus', { bitrate: 128000 }) : Promise.resolve(true),
+        ]);
+        webCodecsOk = vp9Ok && opusOk;
+      } catch {
+        webCodecsOk = false;
+      }
+      useWebCodecsRef.current = webCodecsOk;
 
       const margin = 16;
       const faceSizeRatio = 0.2;
@@ -455,133 +476,192 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
       drawToCanvas(); // Prime canvas before starting recorder
       const drawFrame = () => {
         drawToCanvas();
-        if (mediaRecorderRef.current?.state === 'recording' || mediaRecorderRef.current?.state === 'paused') {
+        const recording = mediaRecorderRef.current?.state === 'recording' || mediaRecorderRef.current?.state === 'paused';
+        const webcodecsRecording = useWebCodecsRef.current && mediabunnyOutputRef.current?.state === 'started';
+        if (recording || webcodecsRecording) {
           drawFrameRef.current = requestAnimationFrame(drawFrame);
         }
       };
-
-      // Record from the display stream only. In many browsers (Chrome on macOS, Safari, etc.)
-      // canvas.captureStream() produces no data for MediaRecorder, so using it causes "recording
-      // produced no data". The canvas is still used for the live preview (user sees screen + face).
-      const videoTrack = displayStream.getVideoTracks()[0];
-
-      const combinedStream = new MediaStream([
-        videoTrack,
-        ...dest.stream.getAudioTracks(),
-      ]);
-      const result = createRecorder(combinedStream);
-      const recorder = result.recorder;
-      const mimeType = result.mimeType;
-
-      chunksRef.current = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          chunksRef.current.push(e.data);
-        }
-      };
-      recorder.onerror = (e) => {
-        console.error('MediaRecorder error:', e);
-        const msg = e instanceof Error ? (e as Error).message : String(e);
-        setError(`Recording failed: ${msg}. Try again or use Chrome/Edge.`);
-      };
-
-      mediaRecorderRef.current = recorder;
-      // Use timeslice so the browser fires ondataavailable periodically (every 1s). Without it,
-      // many browsers (e.g. Chrome on Windows) deliver only a minimal blob (~5 bytes) at stop().
-      const TIMESLICE_MS = 1000;
-      recorder.start(TIMESLICE_MS);
-      recordingStartTimeRef.current = performance.now();
-      setRecordingDuration(0);
-      setStatus('recording');
-      drawFrame();
-
-      // Force Chrome (and others) to push data: requestData() every 1.5s. Some Chrome setups
-      // don't reliably fire ondataavailable on timeslice alone.
-      requestDataIntervalRef.current = setInterval(() => {
-        try {
-          if (mediaRecorderRef.current?.state === 'recording') {
-            mediaRecorderRef.current.requestData();
-          }
-        } catch {
-          /* requestData not supported or recorder stopped */
-        }
-      }, 1500);
 
       const getElapsedSec = () =>
         Math.floor(
           (performance.now() - recordingStartTimeRef.current - totalPausedMsRef.current) / 1000
         );
-      durationIntervalRef.current = setInterval(() => setRecordingDuration(getElapsedSec()), 200);
 
+      const finishRecording = (blob: Blob, durationSec: number) => {
+        setRecordedBlob(blob);
+        setStatus('stopped');
+        setRecording({ status: 'stopped', duration: durationSec, blob });
+        const notify = onRecordingCompleteRef.current;
+        if (notify) notify(blob, durationSec);
+      };
+
+      recordingStartTimeRef.current = performance.now();
+      setRecordingDuration(0);
+      setStatus('recording');
       recordingStreamsRef.current = [displayStream];
       if (camStream) recordingStreamsRef.current.push(camStream);
       if (audioStream) recordingStreamsRef.current.push(audioStream);
+      durationIntervalRef.current = setInterval(() => setRecordingDuration(getElapsedSec()), 200);
 
-      recorder.onstop = () => {
-        if (drawFrameRef.current != null) {
-          cancelAnimationFrame(drawFrameRef.current);
-          drawFrameRef.current = null;
-        }
-        if (durationIntervalRef.current) {
-          clearInterval(durationIntervalRef.current);
-          durationIntervalRef.current = null;
-        }
-        if (requestDataIntervalRef.current) {
-          clearInterval(requestDataIntervalRef.current);
-          requestDataIntervalRef.current = null;
-        }
-        recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
-        recordingStreamsRef.current = [];
-        setScreenStream(null);
-        setCameraStream(null);
-        setMicStream(null);
-        if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
-        if (screenPreviewRef.current) screenPreviewRef.current.srcObject = null;
+      if (useWebCodecsRef.current) {
+        // WebCodecs path: CanvasSource captures composited canvas (screen + face overlay)
+        const output = new MediabunnyOutput({
+          format: new WebMOutputFormat(),
+          target: new BufferTarget(),
+        });
+        mediabunnyOutputRef.current = output;
 
-        const durationSec = Math.floor(
-          (performance.now() - recordingStartTimeRef.current - totalPausedMsRef.current) / 1000
-        );
-        const processChunks = (retried = false) => {
-          const chunks = [...chunksRef.current];
+        const videoSource = new CanvasSource(canvas, {
+          codec: 'vp9',
+          bitrate: QUALITY_HIGH,
+          keyFrameInterval: 1,
+          latencyMode: 'realtime',
+        });
+        mediabunnyVideoSourceRef.current = videoSource;
+        output.addVideoTrack(videoSource, { frameRate: FRAME_RATE });
+
+        const audioTrack = dest.stream.getAudioTracks()[0];
+        if (audioTrack) {
+          const audioSource = new MediaStreamAudioTrackSource(audioTrack, {
+            codec: 'opus',
+            bitrate: 128000,
+          });
+          mediabunnyAudioSourceRef.current = audioSource;
+          audioSource.errorPromise.catch((err) => {
+            console.error('Mediabunny audio error:', err);
+            setError(`Recording failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
+          output.addAudioTrack(audioSource);
+        }
+
+        await output.start();
+        drawFrame();
+
+        let readyForMoreFrames = true;
+        lastFrameNumberRef.current = -1;
+        const addVideoFrame = async () => {
+          if (!readyForMoreFrames || mediabunnyOutputRef.current?.state !== 'started') return;
+          const elapsed = (performance.now() - recordingStartTimeRef.current - totalPausedMsRef.current) / 1000;
+          const frameNumber = Math.round(elapsed * FRAME_RATE);
+          if (frameNumber === lastFrameNumberRef.current) return;
+          lastFrameNumberRef.current = frameNumber;
+          const timestamp = frameNumber / FRAME_RATE;
+          readyForMoreFrames = false;
           try {
-            if (chunks.length === 0) {
-              if (!retried) {
-                // Final chunk can arrive late; wait a bit and try once more.
-                setTimeout(() => processChunks(true), 600);
-                return;
+            await videoSource.add(timestamp, 1 / FRAME_RATE);
+          } catch (e) {
+            console.error('Frame capture error:', e);
+          }
+          readyForMoreFrames = true;
+        };
+        frameCaptureIntervalRef.current = setInterval(
+          () => void addVideoFrame().catch(console.error),
+          1000 / FRAME_RATE
+        );
+        void addVideoFrame().catch(console.error);
+      } else {
+        // MediaRecorder fallback: uses display stream only (no face overlay)
+        const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+        const createRecorder = (stream: MediaStream): { recorder: MediaRecorder; mimeType: string } => {
+          for (const mime of mimeTypes) {
+            if (MediaRecorder.isTypeSupported(mime)) {
+              try {
+                const rec = new MediaRecorder(stream, {
+                  mimeType: mime,
+                  videoBitsPerSecond: 2500000,
+                  ...(hasAudio && { audioBitsPerSecond: 128000 }),
+                });
+                return { recorder: rec, mimeType: mime };
+              } catch {
+                continue;
               }
-              setError(
-                'Recording produced no data. Share a normal app window or your entire screen (not a browser tab with protected content), record for at least 5 seconds, then stop. If it persists, try a different browser or use HTTPS.'
-              );
-              setStatus('idle');
-              return;
             }
-            const actualMime = recorder.mimeType.startsWith('video/webm') ? recorder.mimeType : mimeType;
-            const blob = new Blob(chunks, { type: actualMime });
-            if (blob.size < 100) {
-              setError(
-                `Recording produced almost no data (${blob.size} bytes). Try Chrome or Edge, or disable the face camera overlay and record again.`
-              );
-              setStatus('idle');
-              return;
-            }
-            setRecordedBlob(blob);
-            setStatus('stopped');
-            setRecording({ status: 'stopped', duration: durationSec, blob });
-            const notify = onRecordingCompleteRef.current;
-            if (notify) {
-              notify(blob, durationSec);
-            }
-          } catch (err) {
-            console.error('Recording onstop error:', err);
-            setError(err instanceof Error ? err.message : 'Recording failed to finalize.');
-            setStatus('idle');
+          }
+          try {
+            const rec = new MediaRecorder(stream);
+            return { recorder: rec, mimeType: rec.mimeType || 'video/webm;codecs=vp9' };
+          } catch (e) {
+            throw new Error('Recording not supported in this browser. Try Chrome or Edge.');
           }
         };
 
-        // Give the browser time to deliver the final ondataavailable after stop().
-        setTimeout(() => processChunks(false), 1000);
-      };
+        const videoTrack = displayStream.getVideoTracks()[0];
+        const combinedStream = new MediaStream([videoTrack, ...dest.stream.getAudioTracks()]);
+        const { recorder, mimeType } = createRecorder(combinedStream);
+        mediaRecorderRef.current = recorder;
+        chunksRef.current = [];
+
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+        };
+        recorder.onerror = (e) => {
+          const msg = e instanceof Error ? (e as Error).message : String(e);
+          setError(`Recording failed: ${msg}. Try again or use Chrome/Edge.`);
+        };
+        recorder.start(1000);
+        drawFrame();
+
+        requestDataIntervalRef.current = setInterval(() => {
+          try {
+            if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.requestData();
+          } catch {
+            /* ignore */
+          }
+        }, 1500);
+
+        recorder.onstop = () => {
+          if (drawFrameRef.current != null) {
+            cancelAnimationFrame(drawFrameRef.current);
+            drawFrameRef.current = null;
+          }
+          if (durationIntervalRef.current) {
+            clearInterval(durationIntervalRef.current);
+            durationIntervalRef.current = null;
+          }
+          if (requestDataIntervalRef.current) {
+            clearInterval(requestDataIntervalRef.current);
+            requestDataIntervalRef.current = null;
+          }
+          recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+          recordingStreamsRef.current = [];
+          setScreenStream(null);
+          setCameraStream(null);
+          setMicStream(null);
+          if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
+          if (screenPreviewRef.current) screenPreviewRef.current.srcObject = null;
+
+          const durationSec = getElapsedSec();
+          const processChunks = (retried = false) => {
+            const chunks = [...chunksRef.current];
+            try {
+              if (chunks.length === 0) {
+                if (!retried) {
+                  setTimeout(() => processChunks(true), 600);
+                  return;
+                }
+                setError(
+                  'Recording produced no data. Share a normal app window or your entire screen (not a browser tab with protected content), record for at least 5 seconds, then stop.'
+                );
+                setStatus('idle');
+                return;
+              }
+              const actualMime = recorder.mimeType.startsWith('video/webm') ? recorder.mimeType : mimeType;
+              const blob = new Blob(chunks, { type: actualMime });
+              if (blob.size < 100) {
+                setError(`Recording produced almost no data (${blob.size} bytes). Try Chrome or Edge.`);
+                setStatus('idle');
+                return;
+              }
+              finishRecording(blob, durationSec);
+            } catch (err) {
+              setError(err instanceof Error ? err.message : 'Recording failed to finalize.');
+              setStatus('idle');
+            }
+          };
+          setTimeout(() => processChunks(false), 1000);
+        };
+      }
     } catch (err) {
       console.error('Failed to start recording:', err);
       const msg = err instanceof Error ? err.message : 'Failed to start recording';
@@ -623,6 +703,21 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
   }, [status]);
 
   const pauseRecording = useCallback(() => {
+    if (useWebCodecsRef.current) {
+      if (mediabunnyOutputRef.current?.state !== 'started') return;
+      mediabunnyAudioSourceRef.current?.pause();
+      if (frameCaptureIntervalRef.current) {
+        clearInterval(frameCaptureIntervalRef.current);
+        frameCaptureIntervalRef.current = null;
+      }
+      pauseStartRef.current = performance.now();
+      if (durationIntervalRef.current) {
+        clearInterval(durationIntervalRef.current);
+        durationIntervalRef.current = null;
+      }
+      setStatus('paused');
+      return;
+    }
     const rec = mediaRecorderRef.current;
     if (rec?.state === 'recording') {
       try {
@@ -645,6 +740,41 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
   }, []);
 
   const resumeRecording = useCallback(() => {
+    if (useWebCodecsRef.current) {
+      if (mediabunnyOutputRef.current?.state !== 'started') return;
+      mediabunnyAudioSourceRef.current?.resume();
+      totalPausedMsRef.current += performance.now() - pauseStartRef.current;
+      pauseStartRef.current = 0;
+      const videoSource = mediabunnyVideoSourceRef.current;
+      if (videoSource) {
+        let readyForMoreFrames = true;
+        const addVideoFrame = async () => {
+          if (!readyForMoreFrames || mediabunnyOutputRef.current?.state !== 'started') return;
+          const elapsed = (performance.now() - recordingStartTimeRef.current - totalPausedMsRef.current) / 1000;
+          const frameNumber = Math.round(elapsed * 30);
+          if (frameNumber === lastFrameNumberRef.current) return;
+          lastFrameNumberRef.current = frameNumber;
+          readyForMoreFrames = false;
+          try {
+            await videoSource.add(frameNumber / 30, 1 / 30);
+          } catch {
+            /* ignore */
+          }
+          readyForMoreFrames = true;
+        };
+        frameCaptureIntervalRef.current = setInterval(
+          () => void addVideoFrame().catch(() => {}),
+          1000 / 30
+        );
+      }
+      setStatus('recording');
+      const getElapsedSec = () =>
+        Math.floor(
+          (performance.now() - recordingStartTimeRef.current - totalPausedMsRef.current) / 1000
+        );
+      durationIntervalRef.current = setInterval(() => setRecordingDuration(getElapsedSec()), 200);
+      return;
+    }
     const rec = mediaRecorderRef.current;
     if (rec?.state === 'paused') {
       try {
@@ -674,6 +804,62 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
   }, []);
 
   const stopRecording = useCallback(() => {
+    if (useWebCodecsRef.current) {
+      const output = mediabunnyOutputRef.current;
+      if (!output || output.state !== 'started') return;
+
+      const doStop = async () => {
+        try {
+          if (frameCaptureIntervalRef.current) {
+            clearInterval(frameCaptureIntervalRef.current);
+            frameCaptureIntervalRef.current = null;
+          }
+          if (drawFrameRef.current != null) {
+            cancelAnimationFrame(drawFrameRef.current);
+            drawFrameRef.current = null;
+          }
+          if (durationIntervalRef.current) {
+            clearInterval(durationIntervalRef.current);
+            durationIntervalRef.current = null;
+          }
+          mediabunnyVideoSourceRef.current?.close();
+          mediabunnyAudioSourceRef.current?.close();
+          recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+          recordingStreamsRef.current = [];
+          setScreenStream(null);
+          setCameraStream(null);
+          setMicStream(null);
+          if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
+          if (screenPreviewRef.current) screenPreviewRef.current.srcObject = null;
+
+          await output.finalize();
+          mediabunnyOutputRef.current = null;
+
+          const buffer = (output.target as { buffer?: ArrayBuffer }).buffer;
+          if (!buffer || buffer.byteLength < 100) {
+            setError('Recording produced almost no data. Try a different browser or disable the face camera.');
+            setStatus('idle');
+            return;
+          }
+          const durationSec = Math.floor(
+            (performance.now() - recordingStartTimeRef.current - totalPausedMsRef.current) / 1000
+          );
+          const blob = new Blob([buffer], { type: 'video/webm' });
+          setRecordedBlob(blob);
+          setStatus('stopped');
+          setRecording({ status: 'stopped', duration: durationSec, blob });
+          const notify = onRecordingCompleteRef.current;
+          if (notify) notify(blob, durationSec);
+        } catch (err) {
+          console.error('Mediabunny stop error:', err);
+          setError(err instanceof Error ? err.message : 'Recording failed to finalize.');
+          setStatus('idle');
+        }
+      };
+      void doStop();
+      return;
+    }
+
     const rec = mediaRecorderRef.current;
     if (!rec || rec.state === 'inactive') return;
     try {
@@ -683,6 +869,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
     }
     rec.stop();
   }, []);
+
+  useEffect(() => {
+    stopRecordingRef.current = stopRecording;
+  }, [stopRecording]);
 
   useEffect(() => {
     setRecording({
@@ -765,7 +955,9 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
               Live preview – You are recording
             </h3>
             <p className="text-slate-400 text-sm mb-3">
-              Screen and audio are being saved. Face bubble is preview only. Use the floating toolbar to pause or end.
+              {useWebCodecsRef.current
+                ? 'Screen, face overlay, and audio are being saved. Use the floating toolbar to pause or end.'
+                : 'Screen and audio are being saved. Face bubble is preview only. Use the floating toolbar to pause or end.'}
             </p>
             <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-slate-600">
               <canvas
