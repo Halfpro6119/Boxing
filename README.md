@@ -18,9 +18,9 @@ A full-featured boxing video analysis website where you can import videos, add a
 
 ### Recording Mode
 - **Screen capture**: Record your screen
-- **Face camera bubble**: Optional Loom-style face-in-corner overlay
+- **Face camera bubble**: Optional Loom-style face-in-corner overlay (baked into the recording)
 - **Microphone**: Optional audio from your mic
-- **Download recording**: Save as WebM
+- **Download recording**: Save as WebM or MP4 (MP4 recommended for Safari)
 
 **Tip**: To record the analyzer with annotations, open the analyzer in one tab, switch to Recording Mode, and share that tab when starting the recording.
 

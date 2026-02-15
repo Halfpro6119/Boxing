@@ -3,6 +3,10 @@ import { toBlobURL } from '@ffmpeg/util';
 
 let ffmpegInstance: FFmpeg | null = null;
 
+export async function preloadFFmpeg(): Promise<void> {
+  await getFFmpeg();
+}
+
 async function getFFmpeg(): Promise<FFmpeg> {
   if (ffmpegInstance) return ffmpegInstance;
   const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';

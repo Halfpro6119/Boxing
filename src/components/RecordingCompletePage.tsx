@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRecording, formatDuration } from '../context/RecordingContext';
-import { convertWebmToMp4 } from '../utils/convertToMp4';
+import { convertWebmToMp4, preloadFFmpeg } from '../utils/convertToMp4';
 
 interface RecordingCompletePageProps {
   blob: Blob;
@@ -57,6 +57,7 @@ export default function RecordingCompletePage({
       if (blob.type.includes('webm') && !asWebM) {
         setConverting(true);
         try {
+          await preloadFFmpeg();
           downloadBlob = await convertWebmToMp4(blob);
           ext = 'mp4';
         } catch (err) {
@@ -78,6 +79,12 @@ export default function RecordingCompletePage({
       setConvertError(err instanceof Error ? err.message : 'Download failed');
     }
   };
+
+  useEffect(() => {
+    if (blob && blob.size > 0 && blob.type?.includes('webm')) {
+      preloadFFmpeg().catch(() => {});
+    }
+  }, [blob]);
 
   useEffect(() => {
     if (!blob || blob.size === 0) {
@@ -195,7 +202,7 @@ export default function RecordingCompletePage({
             disabled={converting}
             className="px-6 py-3 rounded-lg bg-accent text-slate-900 font-medium hover:bg-orange-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {converting ? 'Converting to MP4...' : 'Download as MP4'}
+            {converting ? 'Preparing download...' : 'Download as MP4'}
           </button>
           {(!blob?.type || blob?.type.includes('webm') || blob?.type.includes('matroska')) && (
             <button

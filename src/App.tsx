@@ -42,8 +42,37 @@ function AppContent() {
   }, [recording.status, recording.blob, recording.duration, completeRecording]);
 
   const handleSwitchToRecording = async () => {
+    if (isRecording) {
+      if (!window.confirm('This will stop your current recording. Continue?')) return;
+      recording.stopRecording();
+    }
     const ok = (await workspaceRef.current?.confirmLeave()) ?? true;
     if (ok) setMode('recording');
+  };
+
+  const handleSwitchToAnalyzer = async () => {
+    if (isRecording) {
+      if (!window.confirm('This will stop your current recording. Continue?')) return;
+      recording.stopRecording();
+    }
+    const ok = (await workspaceRef.current?.confirmLeave()) ?? true;
+    if (ok) setMode('analyzer');
+  };
+
+  const handleSwitchToEditor = () => {
+    if (isRecording) {
+      if (!window.confirm('This will stop your current recording. Continue?')) return;
+      recording.stopRecording();
+    }
+    setMode('editor');
+  };
+
+  const handleBackFromRecording = () => {
+    if (isRecording) {
+      if (!window.confirm('This will stop your current recording. Continue?')) return;
+      recording.stopRecording();
+    }
+    setMode('analyzer');
   };
 
   const handleOpenInAnalyzer = (blob: Blob) => {
@@ -68,7 +97,7 @@ function AppContent() {
         <div className="max-w-7xl mx-auto flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setMode('analyzer')}
+            onClick={handleSwitchToAnalyzer}
             className={`px-4 py-2 rounded-lg font-medium transition-all ${
               mode === 'analyzer' ? 'bg-ring text-white' : 'bg-slate-700/80 text-slate-400 hover:bg-slate-600'
             }`}
@@ -86,7 +115,7 @@ function AppContent() {
           </button>
           <button
             type="button"
-            onClick={() => setMode('editor')}
+            onClick={handleSwitchToEditor}
             className={`px-4 py-2 rounded-lg font-medium transition-all ${
               mode === 'editor' ? 'bg-ring text-white' : 'bg-slate-700/80 text-slate-400 hover:bg-slate-600'
             }`}
@@ -101,12 +130,12 @@ function AppContent() {
           <div key="recording-container" className="min-h-full">
             <RecordingMode
               key="recording-mode"
-              onBack={() => setMode('analyzer')}
+              onBack={handleBackFromRecording}
               onRecordingComplete={handleRecordingComplete}
             />
           </div>
         )}
-        {mode === 'analyzer' && (
+        {mode === 'analyzer' && !isRecording && (
           <VideoPlayerWorkspace
             ref={workspaceRef}
             initialRecordingBlob={openInAnalyzerBlob}

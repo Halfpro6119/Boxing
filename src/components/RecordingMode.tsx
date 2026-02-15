@@ -42,8 +42,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
   const screenPreviewRef = useRef<HTMLVideoElement>(null);
   const recordingStreamsRef = useRef<MediaStream[]>([]);
   const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const requestDataIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const drawFrameRef = useRef<number | null>(null);
+  const recordingStartTimeRef = useRef<number>(0);
+  const totalPausedMsRef = useRef<number>(0);
+  const pauseStartRef = useRef<number>(0);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -55,7 +57,14 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
   recordingDurationRef.current = recordingDuration;
   onRecordingCompleteRef.current = onRecordingComplete;
 
+  const hasSetInitialCameraRef = useRef(false);
+  const hasSetInitialMicRef = useRef(false);
+
   const enumerateDevices = useCallback(async () => {
+    if (!navigator.mediaDevices) {
+      setError('Media devices are not available. Use HTTPS or localhost.');
+      return;
+    }
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       setCameras(
@@ -68,28 +77,36 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
           .filter((d) => d.kind === 'audioinput')
           .map((d) => ({ deviceId: d.deviceId, label: d.label || `Microphone ${d.deviceId.slice(0, 8)}`, kind: d.kind }))
       );
-      if (devices.length && !selectedCameraId) {
+      if (devices.length && !hasSetInitialCameraRef.current) {
         const firstCam = devices.find((d) => d.kind === 'videoinput');
-        if (firstCam) setSelectedCameraId(firstCam.deviceId);
+        if (firstCam) {
+          setSelectedCameraId(firstCam.deviceId);
+          hasSetInitialCameraRef.current = true;
+        }
       }
-      if (devices.length && !selectedMicId) {
+      if (devices.length && !hasSetInitialMicRef.current) {
         const firstMic = devices.find((d) => d.kind === 'audioinput');
-        if (firstMic) setSelectedMicId(firstMic.deviceId);
+        if (firstMic) {
+          setSelectedMicId(firstMic.deviceId);
+          hasSetInitialMicRef.current = true;
+        }
       }
     } catch (err) {
       console.error('Failed to enumerate devices:', err);
-      setError('Could not list devices');
+      const msg = err instanceof Error ? err.message : 'Could not list devices';
+      setError(`Could not list devices: ${msg}`);
     }
-  }, [selectedCameraId, selectedMicId]);
+  }, []);
 
   useEffect(() => {
     enumerateDevices();
   }, [enumerateDevices]);
 
   useEffect(() => {
+    if (!navigator.mediaDevices) return;
     const onDeviceChange = () => enumerateDevices();
-    navigator.mediaDevices?.addEventListener('devicechange', onDeviceChange);
-    return () => navigator.mediaDevices?.removeEventListener('devicechange', onDeviceChange);
+    navigator.mediaDevices.addEventListener('devicechange', onDeviceChange);
+    return () => navigator.mediaDevices.removeEventListener('devicechange', onDeviceChange);
   }, [enumerateDevices]);
 
   useEffect(() => {
@@ -129,10 +146,6 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         clearInterval(durationIntervalRef.current);
         durationIntervalRef.current = null;
       }
-      if (requestDataIntervalRef.current) {
-        clearInterval(requestDataIntervalRef.current);
-        requestDataIntervalRef.current = null;
-      }
       if (drawFrameRef.current != null) {
         cancelAnimationFrame(drawFrameRef.current);
         drawFrameRef.current = null;
@@ -150,6 +163,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
 
   const connectCamera = useCallback(async () => {
     setError(null);
+    if (!navigator.mediaDevices) {
+      setError('Media devices are not available. Use HTTPS or localhost.');
+      return;
+    }
     try {
       cameraStream?.getTracks().forEach((t) => t.stop());
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -162,7 +179,8 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
       await enumerateDevices();
     } catch (err) {
       console.error('Failed to connect camera:', err);
-      setError(err instanceof Error ? err.message : 'Could not access camera');
+      const msg = err instanceof Error ? err.message : 'Could not access camera';
+      setError(`Camera: ${msg}`);
       setCameraStream(null);
     }
   }, [selectedCameraId, cameraStream, enumerateDevices]);
@@ -175,6 +193,10 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
 
   const connectMic = useCallback(async () => {
     setError(null);
+    if (!navigator.mediaDevices) {
+      setError('Media devices are not available. Use HTTPS or localhost.');
+      return;
+    }
     try {
       micStream?.getTracks().forEach((t) => t.stop());
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -184,7 +206,8 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
       await enumerateDevices();
     } catch (err) {
       console.error('Failed to connect microphone:', err);
-      setError(err instanceof Error ? err.message : 'Could not access microphone');
+      const msg = err instanceof Error ? err.message : 'Could not access microphone';
+      setError(`Microphone: ${msg}`);
       setMicStream(null);
     }
   }, [selectedMicId, micStream, enumerateDevices]);
@@ -277,12 +300,15 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
 
       if (cameraEnabled && !camStream) {
         try {
-          camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          camStream = await navigator.mediaDevices.getUserMedia({
+            video: { width: 320, height: 240, facingMode: 'user', deviceId: selectedCameraId || undefined },
+          });
           setCameraStream(camStream);
         } catch (camErr) {
           camStream = null;
+          const msg = camErr instanceof Error ? camErr.message : 'Could not access camera';
           setError(
-            'Could not access camera (it may be in use by another app). Recording without face camera.'
+            `${msg} (camera may be in use by another app). Recording without face camera.`
           );
         }
       }
@@ -423,10 +449,25 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         }
       };
 
-      // Use the display stream's video track directly for recording. Canvas captureStream() often
-      // produces no data in many browsers; the display track is a real capture and reliably emits.
+      // When face camera is enabled, use canvas.captureStream() to record the composed view
+      // (screen + face overlay). Fall back to display-only if canvas capture fails.
+      let videoTrack: MediaStreamTrack;
+      const useCanvasForFace = camStream && typeof canvas.captureStream === 'function';
+      if (useCanvasForFace) {
+        try {
+          const canvasStream = canvas.captureStream(30);
+          videoTrack = canvasStream.getVideoTracks()[0];
+          if (!videoTrack) throw new Error('Canvas capture produced no video track');
+        } catch (canvasErr) {
+          console.warn('Canvas captureStream failed, using display-only:', canvasErr);
+          videoTrack = displayStream.getVideoTracks()[0];
+        }
+      } else {
+        videoTrack = displayStream.getVideoTracks()[0];
+      }
+
       const combinedStream = new MediaStream([
-        displayStream.getVideoTracks()[0],
+        videoTrack,
         ...dest.stream.getAudioTracks(),
       ]);
       const result = createRecorder(combinedStream);
@@ -441,20 +482,22 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
       };
       recorder.onerror = (e) => {
         console.error('MediaRecorder error:', e);
-        setError('Recording failed. Try again or use a different browser.');
+        const msg = e instanceof Error ? (e as Error).message : String(e);
+        setError(`Recording failed: ${msg}. Try again or use Chrome/Edge.`);
       };
 
       mediaRecorderRef.current = recorder;
-      // No timeslice: browser delivers all data in ondataavailable when we call stop() (and requestData()).
-      // This is more reliable than timeslice in many browsers where canvas/stream encoding failed to emit.
       recorder.start();
+      recordingStartTimeRef.current = performance.now();
       setRecordingDuration(0);
       setStatus('recording');
       drawFrame();
 
-      durationIntervalRef.current = setInterval(() => {
-        setRecordingDuration((d) => d + 1);
-      }, 1000);
+      const getElapsedSec = () =>
+        Math.floor(
+          (performance.now() - recordingStartTimeRef.current - totalPausedMsRef.current) / 1000
+        );
+      durationIntervalRef.current = setInterval(() => setRecordingDuration(getElapsedSec()), 200);
 
       recordingStreamsRef.current = [displayStream];
       if (camStream) recordingStreamsRef.current.push(camStream);
@@ -469,10 +512,6 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
         }
-        if (requestDataIntervalRef.current) {
-          clearInterval(requestDataIntervalRef.current);
-          requestDataIntervalRef.current = null;
-        }
         recordingStreamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
         recordingStreamsRef.current = [];
         setScreenStream(null);
@@ -481,7 +520,9 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
         if (screenPreviewRef.current) screenPreviewRef.current.srcObject = null;
 
-        const durationSec = recordingDurationRef.current;
+        const durationSec = Math.floor(
+          (performance.now() - recordingStartTimeRef.current - totalPausedMsRef.current) / 1000
+        );
         const processChunks = () => {
           const chunks = [...chunksRef.current];
           try {
@@ -554,6 +595,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
     if (rec?.state === 'recording') {
       try {
         rec.pause();
+        pauseStartRef.current = performance.now();
         if (durationIntervalRef.current) {
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
@@ -561,7 +603,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
         setStatus('paused');
       } catch (err) {
         console.error('Failed to pause:', err);
-        setError('Pause not supported in this browser');
+        setError(err instanceof Error ? err.message : 'Pause not supported in this browser');
       }
     }
   }, []);
@@ -571,13 +613,17 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
     if (rec?.state === 'paused') {
       try {
         rec.resume();
+        totalPausedMsRef.current += performance.now() - pauseStartRef.current;
+        pauseStartRef.current = 0;
         setStatus('recording');
-        durationIntervalRef.current = setInterval(() => {
-          setRecordingDuration((d) => d + 1);
-        }, 1000);
+        const getElapsedSec = () =>
+          Math.floor(
+            (performance.now() - recordingStartTimeRef.current - totalPausedMsRef.current) / 1000
+          );
+        durationIntervalRef.current = setInterval(() => setRecordingDuration(getElapsedSec()), 200);
       } catch (err) {
         console.error('Failed to resume:', err);
-        setError('Resume not supported in this browser');
+        setError(err instanceof Error ? err.message : 'Resume not supported in this browser');
       }
     }
   }, []);
@@ -674,7 +720,7 @@ export default function RecordingMode({ onBack, hidden = false, onRecordingCompl
               Live preview – You are recording
             </h3>
             <p className="text-slate-400 text-sm mb-3">
-              Screen and audio are being saved. Face camera is preview only. Use the floating toolbar to pause or end.
+              Screen, face camera, and audio are being saved. Use the floating toolbar to pause or end.
             </p>
             <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-slate-600">
               <canvas
