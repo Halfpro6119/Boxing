@@ -1,27 +1,10 @@
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { toBlobURL } from '@ffmpeg/util';
+import { getFFmpeg, preloadFFmpeg } from './ffmpeg';
 
-let ffmpegInstance: FFmpeg | null = null;
-
-export async function preloadFFmpeg(): Promise<void> {
-  await getFFmpeg();
-}
-
-async function getFFmpeg(): Promise<FFmpeg> {
-  if (ffmpegInstance) return ffmpegInstance;
-  const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
-  const ffmpeg = new FFmpeg();
-  await ffmpeg.load({
-    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-  });
-  ffmpegInstance = ffmpeg;
-  return ffmpeg;
-}
+export { preloadFFmpeg };
 
 const sharedArgs = ['-avoid_negative_ts', 'make_zero', '-fflags', '+genpts'];
 
-async function ensureCleanFs(ffmpeg: FFmpeg): Promise<void> {
+async function ensureCleanFs(ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>): Promise<void> {
   try {
     await ffmpeg.deleteFile('input.webm');
   } catch {
