@@ -26,9 +26,11 @@ function AppContent() {
     setCompleteRecording({ blob, duration });
   }, []);
 
-  // Fallback: show complete page when context has stopped + blob (in case callback didn't run)
+  // Fallback: show complete page when context has stopped + blob (in case callback didn't run).
+  // Skip when mode is 'editor' — user clicked "Open in Video Editor" and we intentionally closed the preview.
   useEffect(() => {
     if (
+      mode !== 'editor' &&
       recording.status === 'stopped' &&
       recording.blob &&
       recording.blob.size > 0 &&
@@ -39,7 +41,7 @@ function AppContent() {
         duration: recording.duration,
       });
     }
-  }, [recording.status, recording.blob, recording.duration, completeRecording]);
+  }, [mode, recording.status, recording.blob, recording.duration, completeRecording]);
 
   const handleSwitchToRecording = async () => {
     if (isRecording) {
