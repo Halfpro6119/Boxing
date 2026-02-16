@@ -88,6 +88,7 @@ function AppContent() {
   };
 
   const handleOpenInEditor = () => {
+    setCompleteRecording(null);
     setMode('editor');
   };
 
